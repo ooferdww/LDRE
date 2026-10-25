@@ -1,0 +1,34 @@
+#cmakedefine PROJECT_NAME "@PROJECT_NAME@"
+#cmakedefine PROJECT_TARNAME "@PROJECT_TARNAME@"
+#cmakedefine WAD_DATA "@WAD_DATA@"
+#cmakedefine PROJECT_VERSION "@PROJECT_VERSION@"
+#cmakedefine PROJECT_STRING "@PROJECT_STRING@"
+
+#cmakedefine DOOMWADDIR "@DOOMWADDIR@"
+#cmakedefine DSDA_ABSOLUTE_PWAD_PATH "@DSDA_ABSOLUTE_PWAD_PATH@"
+
+#cmakedefine WORDS_BIGENDIAN
+
+#cmakedefine HAVE_GETOPT
+#cmakedefine HAVE_MMAP
+#cmakedefine HAVE_CREATE_FILE_MAPPING
+#cmakedefine HAVE_STRSIGNAL
+#cmakedefine HAVE_MKSTEMP
+#cmakedefine HAVE_GETPWUID
+
+#cmakedefine HAVE_SYS_WAIT_H
+#cmakedefine HAVE_UNISTD_H
+#cmakedefine HAVE_ASM_BYTEORDER_H
+#cmakedefine HAVE_DIRENT_H
+
+#cmakedefine HAVE_LIBSDL2_IMAGE
+#cmakedefine HAVE_LIBMAD
+#cmakedefine HAVE_LIBFLUIDSYNTH
+#cmakedefine HAVE_LIBXMP
+#cmakedefine HAVE_LIBVORBISFILE
+#cmakedefine HAVE_LIBPORTMIDI
+#cmakedefine HAVE_SNDFILE_MPEG
+
+#cmakedefine SIMPLECHECKS
+
+#cmakedefine RANGECHECK
