@@ -39,9 +39,6 @@ extern int dogs;
 /* g_game.c shared */
 extern const ticcmd_t *(*g_xdre_cmd_override)(int player);
 
-extern int xUseSuccess;
-extern int xDoneDamage;
-
 int palette_ondamage = 0;
 int palette_onbonus  = 0;
 int palette_onpowers = 0;
@@ -86,7 +83,18 @@ static atexit_listentry_t *exit_funcs[exit_priority_max];
 
 void I_AtExit(atexit_func_t func, dboolean run_on_error,
               const char* name, exit_priority_t priority) {
-    atexit_listentry_t *entry = Z_Malloc(sizeof(*entry));
+    atexit_listentry_t *entry;
+
+    if (!func || priority < 0 || priority >= exit_priority_max)
+        return;
+
+    /* Prevent duplicate registrations of the same function at this priority */
+    for (entry = exit_funcs[priority]; entry; entry = entry->next) {
+        if (entry->func == func)
+            return;
+    }
+
+    entry = (atexit_listentry_t*)Z_Malloc(sizeof(*entry));
     entry->func = func;
     entry->run_on_error = run_on_error;
     entry->next = exit_funcs[priority];
@@ -95,22 +103,49 @@ void I_AtExit(atexit_func_t func, dboolean run_on_error,
 }
 
 void I_SafeExit(int rc) {
+    int priority;
+    for (priority = 0; priority < exit_priority_max; priority++) {
+        while (exit_funcs[priority]) {
+            atexit_listentry_t *entry = exit_funcs[priority];
+            exit_funcs[priority] = entry->next;
+            if (entry->func)
+                entry->func();
+            Z_Free(entry);
+        }
+    }
     exit(rc);
 }
 
 void mainDoom(int argc, char** argv) {
     dsda_ParseCommandLineArgs(argc, argv);
-	
-	/* force -nosound and -nomouse */
+
+    /* force -nosound and -nomouse */
     dsda_UpdateFlag(dsda_arg_nosound, true);
     dsda_UpdateFlag(dsda_arg_nomouse, true);
-	
-	nosfxparm = true;
+
+    nosfxparm = true;
     nomusicparm = true;
-	
+
+    /* If neither -warp nor demo was specified on the CLI, configure warp to map 1 natively */
+    if (!dsda_Flag(dsda_arg_warp) && !dsda_Flag(dsda_arg_playdemo) && !dsda_Flag(dsda_arg_timedemo)) {
+        dsda_arg_t *warp_arg = dsda_Arg(dsda_arg_warp);
+        warp_arg->found = true;
+        warp_arg->count = 1;
+        if (!warp_arg->value.v_int_array) {
+            warp_arg->value.v_int_array = Z_Malloc(sizeof(int));
+        }
+        warp_arg->value.v_int_array[0] = 1;
+
+        if (!dsda_Flag(dsda_arg_skill)) {
+            dsda_UpdateIntArg(dsda_arg_skill, "4"); /* UV */
+        }
+    }
+
     M_LoadDefaults();
     setlocale(LC_TIME, "");
     I_PreInitGraphics();
+
+    /* D_DoomMain will now autostart MAP01 / E1M1 directly inside G_InitNew */
     D_DoomMain();
 
     /* g_ticker netcmd hook */
@@ -120,45 +155,35 @@ void mainDoom(int argc, char** argv) {
         P_InitThinkers();
     }
 
-    /* gameskill fix */
-    if (!dsda_Flag(dsda_arg_skill)) {
-        gameskill = 3; /* 3 = Skill 4 (Ultra-Violence) */
-    }
-
-    /* tried to disable dogs but didn't work for some reason */
-    dogs = 0;
-
-    /* clean game state */
+    /* Single-player console/display defaults */
     playeringame[0] = true;
     for (int i = 1; i < g_maxplayers; i++) {
         playeringame[i] = false;
-        players[i].mo = NULL;
     }
     consoleplayer = 0;
     displayplayer = 0;
 
-    /* map start that didn't work for reasons beyond me right now */
-    if (gamestate != GS_LEVEL) {
-        G_InitNew(gameskill, 1, 1, false);
-    }
-
-    dogs = 0;
-    playeringame[0] = true;
-    for (int i = 1; i < g_maxplayers; i++) {
-        playeringame[i] = false;
-    }
-
     /* status bar and hud */
     ST_Start();
     HU_Start();
+	
+	/* savepoint and TAS buffer mem leak protection */
+    {
+        extern void x_clearAllSavepoints(void);
+        extern void x_shutdown(void);
+        atexit(x_shutdown);
+        atexit(x_clearAllSavepoints);
+        I_AtExit(x_clearAllSavepoints, true, "x_clearAllSavepoints", exit_priority_normal);
+        I_AtExit(x_shutdown, true, "x_shutdown", exit_priority_normal);
+    }
 
     /* keyframe reset */
     dsda_InitAutoKeyFrames();
 
     movement_smooth = 0;
     demo_smoothturns = 0;
-	
-	dsda_UpdateIntConfig(dsda_config_uncapped_framerate, 0, false);
+
+    dsda_UpdateIntConfig(dsda_config_uncapped_framerate, 0, false);
 }
 
 /* i/o */

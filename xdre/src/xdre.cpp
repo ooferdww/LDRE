@@ -71,11 +71,20 @@ extern "C" {
  */
 constexpr double X_PI = 3.14159265358979323846;
 
-unsigned char* header;
-std::size_t headerSize;
+std::vector<unsigned char> header;
 std::vector<ticcmd_t> tics[4];
 std::vector<ticcmd_t>::iterator nextTic[4];
 int savepointStyle;
+
+extern "C" void x_shutdown(void) {
+    header.clear();
+    header.shrink_to_fit();
+    for (int p = 0; p < 4; ++p) {
+        tics[p].clear();
+        tics[p].shrink_to_fit();
+        nextTic[p] = std::end(tics[p]);
+    }
+}
 
 void display();
 bool loadReplay(unsigned char const* demo_p, std::size_t size);
@@ -84,6 +93,14 @@ void makeCmds();
 void goForward(int numTics);
 void goBack(int numTics);
 
+static ticcmd_t* getActiveTic() {
+    auto& playerTics = tics[displayplayer];
+    if (playerTics.empty() || nextTic[displayplayer] == playerTics.begin()) {
+        return nullptr;
+    }
+    return &(*std::prev(nextTic[displayplayer]));
+}
+
 void display() {
     if (gamestate == GS_LEVEL) {
         if (players[displayplayer].mo != NULL) {
@@ -91,6 +108,23 @@ void display() {
         }
     } else if (gamestate == GS_INTERMISSION || gamestate == GS_FINALE) {
         D_Display();
+    }
+}
+
+static void rewindDemoToStart() {
+    gametic = basetic = 0;
+    playeringame[0] = true;
+    if (!header.empty()) {
+        XDRE_ReadDemoHeader(header.data(), header.size());
+    }
+    playeringame[0] = true;
+
+    for (int p = 0; p < 4; ++p) {
+        if (playeringameGet(p) && !tics[p].empty()) {
+            nextTic[p] = std::begin(tics[p]);
+        } else {
+            nextTic[p] = std::end(tics[p]);
+        }
     }
 }
 
@@ -103,13 +137,8 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     /* demo opts from first read */
     G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 
-    if (headerSize != (tics_p - demo_p)) {
-        delete[] header;
-        headerSize = tics_p - demo_p;
-        header = new unsigned char [headerSize];
-    }
-
-    std::memcpy(header, demo_p, headerSize);
+    std::size_t const newHeaderSize = static_cast<std::size_t>(tics_p - demo_p);
+    header.assign(demo_p, demo_p + newHeaderSize);
 
     x_clearMapSavepoints();
     x_clearUserSavepoint();
@@ -120,14 +149,7 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     unsigned char const* demomarker_p = readTics(tics_p, size - (tics_p - demo_p));
 
     /* reset engine from goback */
-    gametic = basetic = 0;
-    playeringame[0] = true;
-    XDRE_ReadDemoHeader(header, headerSize);
-    playeringame[0] = true;
-
-    for (int p = 0; p < 4; ++p) {
-        nextTic[p] = std::begin(tics[p]);
-    }
+    rewindDemoToStart();
 
     displayplayer = consoleplayer;
 	
@@ -140,7 +162,9 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
 
 unsigned char const* readTics(unsigned char const* start_p, std::size_t size) {
     unsigned char const* tic_p = start_p;
+    unsigned char const* end_p = start_p + size;
     int plr = 0;
+
     for (int i = 0; i < 4; ++i) {
         if (playeringameGet(i)) {
             plr = i;
@@ -148,7 +172,13 @@ unsigned char const* readTics(unsigned char const* start_p, std::size_t size) {
         }
     }
 
-    while (*tic_p != 0x80 && tic_p - start_p < size) {
+    std::size_t const ticStride = longtics ? 5 : 4;
+
+    while (tic_p < end_p && *tic_p != 0x80) {
+        if (static_cast<std::size_t>(end_p - tic_p) < ticStride) {
+            break; // Truncated tic data
+        }
+
         ticcmd_t cmd = {};
         unsigned char at = 0;
         cmd.forwardmove = static_cast<signed char>(*tic_p++);
@@ -170,16 +200,22 @@ unsigned char const* readTics(unsigned char const* start_p, std::size_t size) {
         }
 
         tics[plr++].push_back(cmd);
+
+        int checkCount = 0;
         while (!playeringameGet(plr)) {
-            if(plr >= 3) {
+            if (plr >= 3) {
                 plr = 0;
             } else {
                 ++plr;
             }
+            if (++checkCount > 4) {
+                plr = 0;
+                break;
+            }
         }
     }
 
-    return *tic_p == 0x80 ? tic_p : nullptr;
+    return (tic_p < end_p && *tic_p == 0x80) ? tic_p : nullptr;
 }
 
 void makeCmds() {
@@ -193,6 +229,26 @@ void makeCmds() {
             netcmds[p] = {};
         }
     }
+}
+
+static void safeAdvanceTic(int p, std::ptrdiff_t diff) {
+    if (!playeringameGet(p) || tics[p].empty()) {
+        return;
+    }
+    if (diff < 0) {
+        auto distFromBegin = std::distance(tics[p].begin(), nextTic[p]);
+        if (-diff >= distFromBegin) {
+            nextTic[p] = tics[p].begin();
+            return;
+        }
+    } else if (diff > 0) {
+        auto distFromEnd = std::distance(nextTic[p], tics[p].end());
+        if (diff >= distFromEnd) {
+            nextTic[p] = tics[p].end();
+            return;
+        }
+    }
+    std::advance(nextTic[p], diff);
 }
 
 void goForward(int numTics) {
@@ -234,12 +290,6 @@ void goForward(int numTics) {
 
         makeCmds();
 
-        for (int p = 0; p < 4; ++p) {
-            if (playeringameGet(p)) {
-                players[p].cmd = netcmds[p];
-            }
-        }
-
         G_Ticker();
         ++gametic;
     }
@@ -268,26 +318,15 @@ void goBack(int numTics) {
     }
 
     if (!x_loadSavepoint(destTic)) {
-        /* only advance valid player streams */
         for (int p = 0; p < 4; ++p) {
-            if (playeringameGet(p) && !tics[p].empty()) {
-                std::advance(nextTic[p], gametic - oldTic);
-            }
+            safeAdvanceTic(p, gametic - oldTic);
         }
         goForward(destTic - gametic);
     } else {
-        x_clearMapSavepoints();
-        x_clearUserSavepoint();
-        gametic = 0;
-        playeringame[0] = true;
-        XDRE_ReadDemoHeader(header, headerSize);
-        playeringame[0] = true;
-        for (int p = 0; p < 4; ++p) {
-            if (playeringameGet(p) && !tics[p].empty()) {
-                nextTic[p] = std::begin(tics[p]);
-            }
-        }
-        goForward(destTic);
+      x_clearMapSavepoints();
+      x_clearUserSavepoint();
+      rewindDemoToStart();
+      goForward(destTic);
     }
 }
 
@@ -309,6 +348,10 @@ bool bruteForceTics(std::vector<BruteTic>::const_iterator brute_it,
                     std::vector<BruteTic>::const_iterator bruteEnd_it,
                     BruteCheck const& bruteCheck,
                     bool const& abort) {
+    if (brute_it == bruteEnd_it) {
+        return false;
+    }
+
     auto bruteForward = [](int numTics) {
         if (numTics < 1) {
             return;
@@ -320,11 +363,7 @@ bool bruteForceTics(std::vector<BruteTic>::const_iterator brute_it,
             xDoneDamage = 0;
 
             makeCmds();
-			for (int p = 0; p < 4; ++p) {
-            if (playeringameGet(p)) {
-                players[p].cmd = netcmds[p];
-            }
-        }
+			
             G_Ticker();
             ++gametic;
         }
@@ -337,14 +376,12 @@ bool bruteForceTics(std::vector<BruteTic>::const_iterator brute_it,
         }
         int oldTic = gametic;
         if (!x_loadSavepoint(gametic + 1)) {
-            std::advance(nextTic[displayplayer], gametic - oldTic);
+            for (int p = 0; p < 4; ++p) {
+                safeAdvanceTic(p, gametic - oldTic);
+            }
             bruteForward(gameticOnEnter - gametic);
         } else {
-            gametic = 0;
-            XDRE_ReadDemoHeader(header, headerSize);
-            for (int p = 0; p < 4; ++p) {
-                nextTic[p] = std::begin(tics[p]);
-            }
+            rewindDemoToStart();
         }
     };
 
@@ -464,12 +501,11 @@ void xdre::init(int argc, char** argv) {
     if (gameskill <= 0 || gameskill > 4) {
         gameskill = 3;
     }
-	
+
     playeringame[0] = true;
     displayplayer = consoleplayer;
 
     for (int p = 0; p < 4; ++p) {
-        tics[p].resize(1000000, {});
         tics[p].resize(10, {});
     }
     nextTic[0] = std::begin(tics[0]);
@@ -478,21 +514,21 @@ void xdre::init(int argc, char** argv) {
         nextTic[p] = std::end(tics[p]);
     }
 
-    headerSize = getHeaderSize();
-    header = new unsigned char [headerSize];
-    x_initHeader(header);
+    header.resize(getHeaderSize());
+    x_initHeader(header.data());
 
     palette_onbonus = 0;
     palette_ondamage = 0;
     palette_onpowers = 0;
-	
-	dsda_UpdateIntConfig(dsda_config_palette_ondamage, 0, false);
+
+    dsda_UpdateIntConfig(dsda_config_palette_ondamage, 0, false);
     dsda_UpdateIntConfig(dsda_config_palette_onbonus,  0, false);
     dsda_UpdateIntConfig(dsda_config_palette_onpowers, 0, false);
 
     savepointStyle = SpStyle::SP_START;
 
     if (gamestate == GS_LEVEL) {
+        x_setSavepoint(0);
         goForward(1);
         display();
     }
@@ -502,6 +538,10 @@ void xdre::init(int argc, char** argv) {
 bool xdre::bruteForce(std::vector<BruteTic> bruteTics,
                       BruteCheck const& bruteCheck,
                       bool const& abort) {
+    if (bruteTics.empty()) {
+        return false;
+    }
+
     std::sort(std::begin(bruteTics), std::end(bruteTics), [](BruteTic const& lhs, BruteTic const& rhs){return lhs.tic < rhs.tic;});
     int bruteStart = bruteTics.front().tic;
     int bruteEnd = bruteTics.back().tic;
@@ -512,20 +552,12 @@ bool xdre::bruteForce(std::vector<BruteTic> bruteTics,
     x_clearMapSavepoints();
     x_clearUserSavepoint();
 
-    gametic = 0;
-    XDRE_ReadDemoHeader(header, headerSize);
-    for (int p = 0; p < 4; ++p) {
-        nextTic[p] = std::begin(tics[p]);
-    }
+    rewindDemoToStart();
 
     int destSavepoint = bruteStart;
     while (destSavepoint-- > 0) {
         makeCmds();
-		for (int p = 0; p < 4; ++p) {
-            if (playeringameGet(p)) {
-                players[p].cmd = netcmds[p];
-            }
-        }
+		
         G_Ticker();
         ++gametic;
     }
@@ -570,7 +602,9 @@ void xdre::doSdlEvents() {
 bool xdre::save(std::FILE* file) {
     rewind(file);
 
-    fwrite(header, sizeof header[0], headerSize, file);
+    if (!header.empty()) {
+        fwrite(header.data(), sizeof(header[0]), header.size(), file);
+    }
 
     decltype(std::begin(tics[0])) iters[4] {
         std::begin(tics[0]),
@@ -608,16 +642,23 @@ bool xdre::save(std::FILE* file) {
 }
 
 bool xdre::load(std::FILE* file) {
+    if (!file) {
+        return false;
+    }
     std::fseek(file, 0, SEEK_END);
-    auto size = std::ftell(file);
+    long size = std::ftell(file);
+    if (size <= 0) {
+        return false;
+    }
     rewind(file);
-    auto data = new unsigned char[size];
-    std::fread(&data[0], sizeof data[0], size, file);
 
-    bool ret = loadReplay(data, size);
+    std::vector<unsigned char> data(static_cast<std::size_t>(size));
+    std::size_t readBytes = std::fread(data.data(), 1, data.size(), file);
+    if (readBytes != data.size()) {
+        return false;
+    }
 
-    delete[] data;
-    return ret;
+    return loadReplay(data.data(), data.size());
 }
 
 void xdre::setSavepoint() {
@@ -646,60 +687,57 @@ void xdre::seekDemo(int numTics) {
 }
 
 void xdre::copyTic() {
-    auto tic = std::prev(nextTic[displayplayer]);
-    if (tic == std::end(tics[displayplayer])) {
+    if (nextTic[displayplayer] == std::begin(tics[displayplayer])) {
         return;
     }
+    auto tic = std::prev(nextTic[displayplayer]);
 
-    tics[displayplayer].emplace(nextTic[displayplayer], *tic);
+    // emplace returns the iterator pointing to the newly inserted element
+    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], *tic);
     goForward(1);
     display();
 }
 
 void xdre::copyTicX(int val) {
-    auto tic = std::prev(nextTic[displayplayer]);
-    if (tic == std::end(tics[displayplayer])) {
+    if (nextTic[displayplayer] == std::begin(tics[displayplayer])) {
         return;
     }
+    auto tic = std::prev(nextTic[displayplayer]);
+    ticcmd_t cmd = *tic; // Make a local copy so reallocations don't invalidate *tic
 
     for (int i = 0; i < val; i++) {
-        tics[displayplayer].emplace(nextTic[displayplayer], *tic);
+        nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], cmd);
         goForward(1);
     }
     display();
 }
 
 void xdre::deleteTic() {
-    auto tic = std::prev(nextTic[displayplayer]);
-    if (tic == std::end(tics[displayplayer])) {
+    if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
         return;
     }
 
-    if(!tics[displayplayer].size()) {
-        return;
-    }
-    tics[displayplayer].erase(tic);
+    auto tic = std::prev(nextTic[displayplayer]);
+    // erase() returns the iterator following the removed element
+    nextTic[displayplayer] = tics[displayplayer].erase(tic);
     goBack(0);
     display();
 }
 
 void xdre::deleteTicX(int val) {
-    auto tic = std::prev(nextTic[displayplayer]);
-    if (tic == std::end(tics[displayplayer])) {
-        return;
-    }
     for (int i = 0; i < val; i++) {
-        if (!tics[displayplayer].size()) {
-            return;
+        if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+            break;
         }
-        tics[displayplayer].erase(tic);
+        auto tic = std::prev(nextTic[displayplayer]);
+        nextTic[displayplayer] = tics[displayplayer].erase(tic);
         goBack(1);
     }
     display();
 }
 
 void xdre::newTic() {
-    tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});
+    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});
     goForward(1);
     display();
 }
@@ -740,26 +778,29 @@ void xdre::toggleBlood() {
 }
 
 void xdre::toggleFire() {
-    std::prev(nextTic[displayplayer])->buttons ^= BT_ATTACK;
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->buttons ^= BT_ATTACK;
     goBack(0);
     display();
 }
 
 void xdre::toggleUse() {
-    std::prev(nextTic[displayplayer])->buttons ^= BT_USE;
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->buttons ^= BT_USE;
     goBack(0);
     display();
 }
 
 void xdre::changeWeapon(char wpn) {
-    auto tic = std::prev(nextTic[displayplayer]);
+    auto tic = getActiveTic();
+    if (!tic) return;
     tic->buttons &= ~(BT_CHANGE | BT_WEAPONMASK);
-
     if (wpn > 0 && wpn < 10) {
         tic->buttons |= BT_CHANGE;
         tic->buttons |= (wpn - 1) << BT_WEAPONSHIFT;
     }
-
     goBack(0);
     display();
 }
@@ -770,104 +811,96 @@ void xdre::getOptions(int options[]) {
 
 void xdre::changeOptions(int options[]) {
     x_changeOptions(options);
-    headerSize = getHeaderSize();
-    delete[] header;
-    header = new unsigned char [headerSize];
-    x_initHeader(header);
+    header.resize(getHeaderSize());
+    x_initHeader(header.data());
 
     x_clearMapSavepoints();
     x_clearUserSavepoint();
 
-    gametic = 0;
-    playeringame[0] = true;
-
-    /* ensure clnomonsters before reading header */
-    G_XDRE_SetDemoOptions(options[7], options[5], options[6]);
-
-    XDRE_ReadDemoHeader(header, headerSize);
-
-    playeringame[0] = true;
-    for (int p = 0; p < 4; ++p) {
-        nextTic[p] = std::begin(tics[p]);
-    }
-
-    /* fix residual state */
+    rewindDemoToStart();
     G_XDRE_SetDemoOptions(options[7], options[5], options[6]);
 
     goForward(1);
     display();
 }
 
+static inline signed short toAngleTurn(signed short val) {
+    return longtics ? val : static_cast<signed short>(val << 8);
+}
+
 void xdre::transpose(bool direction, char mode) {
-    if (mode > 2) {
-        return;
-    }
-    signed char sidemove = std::prev(nextTic[displayplayer])->sidemove;
-    if (sidemove == -128) {
-        sidemove = -127;
-    }
-    signed char forwardmove = std::prev(nextTic[displayplayer])->forwardmove;
+    if (mode > 2) return;
+    auto tic = getActiveTic();
+    if (!tic) return;
+
+    signed char sidemove = tic->sidemove;
+    if (sidemove == -128) sidemove = -127;
+    signed char forwardmove = tic->forwardmove;
+    if (forwardmove == -128) forwardmove = -127;
+
+    signed short const angleStep = toAngleTurn(64);
+
     if (!direction) {
         if (mode != 1) {
-            std::prev(nextTic[displayplayer])->forwardmove = -sidemove;
-            std::prev(nextTic[displayplayer])->sidemove = forwardmove;
-            }
-        if (mode != 2) std::prev(nextTic[displayplayer])->angleturn += 64 << 8;
+            tic->forwardmove = -sidemove;
+            tic->sidemove = forwardmove;
+        }
+        if (mode != 2) tic->angleturn += angleStep;
     } else {
         if (mode != 1) {
-            std::prev(nextTic[displayplayer])->forwardmove = sidemove;
-            std::prev(nextTic[displayplayer])->sidemove = -forwardmove;
-            }
-        if (mode != 2) std::prev(nextTic[displayplayer])->angleturn -= 64 << 8;
+            tic->forwardmove = sidemove;
+            tic->sidemove = -forwardmove;
+        }
+        if (mode != 2) tic->angleturn -= angleStep;
     }
     goBack(0);
     display();
 }
 
 void xdre::run(signed char val) {
-    if (val == -128) {
-        val = -127;
-    }
-    std::prev(nextTic[displayplayer])->forwardmove = val;
+    auto tic = getActiveTic();
+    if (!tic) return;
+    if (val == -128) val = -127;
+    tic->forwardmove = val;
     goBack(0);
     display();
 }
 
 void xdre::strafe(signed char val) {
-    std::prev(nextTic[displayplayer])->sidemove = val;
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->sidemove = val;
     goBack(0);
     display();
+}
+
+/* turn functions */
+int turnstep = 1;
+
+void xdre::setTurnStep(int step) {
+    turnstep = step;
 }
 
 void xdre::turn(signed short val) {
-    if (!longtics) {
-        std::prev(nextTic[displayplayer])->angleturn = val << 8;
-    } else {
-        std::prev(nextTic[displayplayer])->angleturn = val;
-    }
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->angleturn = toAngleTurn(val);
     goBack(0);
     display();
 }
 
-int turnstep = 1;
-void xdre::setTurnStep(int step) {turnstep = step;}
-
 void xdre::turnStepLeft() {
-    if (!longtics) {
-        std::prev(nextTic[displayplayer])->angleturn += turnstep << 8;
-    } else {
-        std::prev(nextTic[displayplayer])->angleturn += turnstep;
-    }
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->angleturn += toAngleTurn(turnstep);
     goBack(0);
     display();
 }
 
 void xdre::turnStepRight() {
-    if (!longtics) {
-        std::prev(nextTic[displayplayer])->angleturn -= turnstep << 8;
-    } else {
-        std::prev(nextTic[displayplayer])->angleturn -= turnstep;
-    }
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->angleturn -= toAngleTurn(turnstep);
     goBack(0);
     display();
 }
@@ -887,12 +920,7 @@ std::string xdre::getTicString(unsigned int n) {
         return "";
     }
 
-    int divisor;
-    if (longtics) {
-        divisor = 1;
-    } else {
-        divisor = 256;
-    }
+    int const divisor = longtics ? 1 : 256;
     std::stringstream ss;
     ticcmd_t const& tic = tics[displayplayer][n];
 
@@ -1053,8 +1081,6 @@ double xdre::getDistanceFromLine() {
         double y;
     } PA, AB, PX, v1, v2;
 
-    double dist;
-    double t;
     v1.x = getLinedefVertex(0, 0);
     v1.y = getLinedefVertex(0, 1);
     v2.x = getLinedefVertex(1, 0);
@@ -1065,15 +1091,24 @@ double xdre::getDistanceFromLine() {
     AB.x = v2.x - v1.x;
     AB.y = v2.y - v1.y;
 
-    t = -PA.x * AB.x + -PA.y * AB.y;
-    t /= AB.x * AB.x + AB.y * AB.y;
+    double const denom = AB.x * AB.x + AB.y * AB.y;
+    if (denom <= 0.0) {
+        return 0.0;
+    }
 
+    double t = (-PA.x * AB.x + -PA.y * AB.y) / denom;
     PX.x = PA.x + t * AB.x;
     PX.y = PA.y + t * AB.y;
 
-    dist = std::sqrt(PX.x * PX.x + PX.y * PX.y);
-    if (((v2.y - v1.y) / (v2.x - v1.x)) * (x_getXPos() - v1.x) + v1.y < x_getYPos()) {
-        return -dist;
+    double dist = std::sqrt(PX.x * PX.x + PX.y * PX.y);
+    if (std::abs(v2.x - v1.x) > 1e-9) {
+        if (((v2.y - v1.y) / (v2.x - v1.x)) * (x_getXPos() - v1.x) + v1.y < x_getYPos()) {
+            return -dist;
+        }
+    } else {
+        if (x_getXPos() < v1.x) {
+            return -dist;
+        }
     }
     return dist;
 }
@@ -1102,14 +1137,33 @@ bool xdre::getBlood() {
     return palette_ondamage ? true : false;
 }
 
+static const ticcmd_t* getRelativeTic(int i, int listLength) {
+    auto& curTics = tics[displayplayer];
+    if (curTics.empty()) {
+        return nullptr;
+    }
+
+    auto curIndex = static_cast<std::ptrdiff_t>(std::distance(std::begin(curTics), nextTic[displayplayer]));
+    std::ptrdiff_t targetIndex = curIndex - listLength + i;
+
+    if (targetIndex < 0 || static_cast<std::size_t>(targetIndex) >= curTics.size()) {
+        return nullptr;
+    }
+
+    return &curTics[static_cast<std::size_t>(targetIndex)];
+}
+
 int xdre::getCurrentStrafe(int i, int listLength) {
-    return std::prev(nextTic[displayplayer]-listLength+i+1)->sidemove;
+    auto cmd = getRelativeTic(i, listLength);
+    return cmd ? cmd->sidemove : 0;
 }
 
 int xdre::getCurrentRun(int i, int listLength) {
-    return std::prev(nextTic[displayplayer]-listLength+i+1)->forwardmove;
+    auto cmd = getRelativeTic(i, listLength);
+    return cmd ? cmd->forwardmove : 0;
 }
 
 int xdre::getCurrentTurn(int i, int listLength) {
-    return std::prev(nextTic[displayplayer]-listLength+i+1)->angleturn;
+    auto cmd = getRelativeTic(i, listLength);
+    return cmd ? cmd->angleturn : 0;
 }

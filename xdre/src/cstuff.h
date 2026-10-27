@@ -37,9 +37,11 @@ int x_initSize(void);
 
 void x_clearMapSavepoints(void);
 void x_clearUserSavepoint(void);
+void x_clearAllSavepoints(void);
 int x_getSavepointTic(int dest);
 int x_setSavepoint(int isUserSave);
 int x_loadSavepoint(int dest);
+void x_shutdown(void);
 
 #ifdef __cplusplus
 }

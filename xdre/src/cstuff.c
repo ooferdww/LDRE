@@ -41,7 +41,7 @@ extern void RecalculateDrawnSubsectors(void);
 extern int totalleveltimes;
 extern dboolean setsizeneeded;
 extern byte* savebuffer;
-extern size_t save_size;
+// extern size_t save_size;
 extern void P_SetSaveBuffer(byte *buf, int size);
 extern byte* demobuffer;
 extern dboolean respawnmonsters;
@@ -69,6 +69,7 @@ float angles = 16384.0f;
 typedef struct {
     int tic;
     byte* save;
+    size_t size;
 } xSavepoint_t;
 
 #define MAXSSP 100
@@ -104,12 +105,17 @@ void x_setLinedefCheck(int linedef) {
     xLineVertexes[1][0] = 0;
     xLineVertexes[1][1] = 0;
 
+    if (gamestate != GS_LEVEL || !lines || numlines <= 0)
+        return;
+
     if (linedef >= 0 && linedef < numlines) {
-        xLineId = linedef;
-        xLineVertexes[0][0] = lines[linedef].v1->x;
-        xLineVertexes[0][1] = lines[linedef].v1->y;
-        xLineVertexes[1][0] = lines[linedef].v2->x;
-        xLineVertexes[1][1] = lines[linedef].v2->y;
+        if (lines[linedef].v1 && lines[linedef].v2) {
+            xLineId = linedef;
+            xLineVertexes[0][0] = lines[linedef].v1->x;
+            xLineVertexes[0][1] = lines[linedef].v1->y;
+            xLineVertexes[1][0] = lines[linedef].v2->x;
+            xLineVertexes[1][1] = lines[linedef].v2->y;
+        }
     }
 }
 
@@ -123,6 +129,9 @@ void x_setSectorCheck(int sector) {
     for (i = 0; i < 3; ++i) {
         xSectorInfo[i] = 0;
     }
+
+    if (gamestate != GS_LEVEL || !sectors || numsectors <= 0)
+        return;
 
     if (sector >= 0 && sector < numsectors) {
         secID = sector;
@@ -318,16 +327,27 @@ void x_changeOptions(int options[]) {
 
     G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 
+    dboolean any_active = false;
     for (i = 0; i < 4; i++) {
         plr_active[i] = (options[9] & (1 << i)) ? true : false;
-        playeringameSet(i, plr_active[i]);
-        if (plr_active[i])
+        if (plr_active[i]) {
             lastplayer = i;
+            any_active = true;
+        }
+    }
+
+    /* Safety fallback: Player 0 must always be active if mask is empty */
+    if (!any_active) {
+        plr_active[0] = true;
+        lastplayer = 0;
     }
 
     for (i = 0; i < 4; i++) {
-        if (!plr_active[i] && consoleplayer == i)
-            displayplayer = consoleplayer = lastplayer;
+        playeringameSet(i, plr_active[i]);
+    }
+
+    if (!plr_active[consoleplayer]) {
+        displayplayer = consoleplayer = lastplayer;
     }
 
     monsters_remember     = options[10];
@@ -365,6 +385,14 @@ void x_initHeader(unsigned char* demo_p) {
     /* gskill */
     if (gameskill < 0 || gameskill > 4) {
         gameskill = 3;
+    }
+	
+	/* enforce ep/map with null protection */
+    if (gameepisode <= 0) {
+        gameepisode = 1;
+    }
+    if (gamemap <= 0) {
+        gamemap = 1;
     }
 
     /* failed dog fix */
@@ -480,6 +508,7 @@ void x_clearMapSavepoints(void) {
             savepoints[i].save = NULL;
         }
         savepoints[i].tic = 0;
+        savepoints[i].size = 0;
     }
 }
 
@@ -489,6 +518,13 @@ void x_clearUserSavepoint(void) {
         savepoints[0].save = NULL;
     }
     savepoints[0].tic = 0;
+    savepoints[0].size = 0;
+}
+
+void x_clearAllSavepoints(void) {
+    x_clearUserSavepoint();
+    x_clearMapSavepoints();
+    save_p = savebuffer = NULL;
 }
 
 static int x_getSavepointIndex(int dest) {
@@ -526,25 +562,30 @@ int x_setSavepoint(int isUserSave) {
     int i;
     int tic_diff;
 
-    if (map < 0 || map > MAXSSP - 1 || gamestate != GS_LEVEL || gameaction != ga_nothing)
+    if (gamestate != GS_LEVEL || gameaction != ga_nothing) {
+        save_p = savebuffer = NULL;
         return 1;
+    }
+
+    if (map < 0)
+        map = 0;
+    else if (map >= MAXSSP)
+        map = MAXSSP - 1;
 
     if (leveltime != 1 || isUserSave != 0)
         map = 0;
 
-    if (savepoints[map].save) {
-        free(savepoints[map].save);
-        savepoints[map].save = NULL;
+    if (!savepoints[map].save) {
+        savepoints[map].save = (byte*)malloc(XDRE_SAVEGAMESIZE);
+        if (!savepoints[map].save)
+            return 1;
+        savepoints[map].size = XDRE_SAVEGAMESIZE;
     }
-
-    savepoints[map].save = (byte*)malloc(XDRE_SAVEGAMESIZE);
-    if (!savepoints[map].save)
-        return 1;
 
     savepoints[map].tic = gametic;
 
     /* init save buffer */
-    P_SetSaveBuffer(savepoints[map].save, XDRE_SAVEGAMESIZE);
+    P_SetSaveBuffer(savepoints[map].save, savepoints[map].size);
 
     *save_p++ = (byte)compatibility_level;
     *save_p++ = (byte)gameskill;
@@ -585,8 +626,9 @@ int x_setSavepoint(int isUserSave) {
 
     *save_p++ = 0xe6;
 
-	/* savebuffer could have been reallocated if it exceeded XDRE_SAVEGAMESIZE */
+    /* savebuffer could have been reallocated if it exceeded initial size */
     savepoints[map].save = savebuffer;
+    savepoints[map].size = (size_t)(save_p - savebuffer);
     save_p = savebuffer = NULL;
     return 0;
 }
@@ -599,9 +641,10 @@ int x_loadSavepoint(int dest) {
     int tic_diff;
 
     map = x_getSavepointIndex(dest);
-
-    if (map < 0 || !savepoints[map].save)
+    if (map < 0 || map >= MAXSSP || !savepoints[map].save) {
+        save_p = savebuffer = NULL;
         return 1;
+    }
 
     if (map != 0)
         x_clearUserSavepoint();
@@ -645,8 +688,8 @@ int x_loadSavepoint(int dest) {
         S_ChangeMusic(idmusnum, 1);
     }
 
-    /* attach buffer */
-    P_SetSaveBuffer(savepoints[map].save, XDRE_SAVEGAMESIZE);
+    /* attach buffer with actual size */
+    P_SetSaveBuffer(savepoints[map].save, savepoints[map].size);
     save_p = src;
 
     memcpy(&leveltime, save_p, sizeof(leveltime));
