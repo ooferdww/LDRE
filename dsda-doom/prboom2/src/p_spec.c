@@ -1595,6 +1595,8 @@ void P_CrossHexenSpecialLine(line_t *line, int side, mobj_t *thing, dboolean bos
 //  crossed. Change is qualified by demo_compatibility.
 //
 // CPhipps - take a line_t pointer instead of a line number, as in MBF
+int xLineCrossed = 0;
+
 void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolean bossaction)
 {
   int ok;
@@ -1719,6 +1721,13 @@ void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolea
     }
 
     if (linefunc) // if it was a valid generalized type
+	  
+	  /* active display player only */
+	  if (thing && thing->player && (thing->player - players == displayplayer))
+      {
+        xLineCrossed = (int)(line - lines);
+      }
+	  
       switch((line->special & TriggerType) >> TriggerTypeShift)
       {
         case WalkOnce:
@@ -1770,6 +1779,12 @@ void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolea
 
   if (!P_CheckTag(line))  //jff 2/27/98 disallow zero tag on some types
     return;
+
+  /* active display player only */
+  if (thing && thing->player && (thing->player - players == displayplayer))
+  {
+    xLineCrossed = (int)(line - lines);
+  }
 
   // Dispatch on the line special value to the line's action routine
   // If a once only function, and successful, clear the line special

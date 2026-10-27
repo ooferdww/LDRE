@@ -1241,8 +1241,12 @@ static void G_DoLoadLevel (void)
   if (map_format.sndseq)
     SN_StopAllSequences();
 
+#ifdef XDRE
+  G_XDRE_SetDemoOptions(clnomonsters, clrespawnparm, clfastparm);
+#else
   if (clnomonsters)
     nomonsters = clnomonsters;
+#endif
 
   P_SetupLevel (gameepisode, gamemap, gameskill);
   
@@ -2884,7 +2888,9 @@ void G_ReloadDefaults(void)
   // killough 3/31/98, 4/5/98: demo sync insurance
   demo_insurance = 0;
 
+#ifndef XDRE
   rngseed += I_GetRandomTimeSeed() + gametic; // CPhipps
+#endif
 }
 
 void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
@@ -2892,6 +2898,25 @@ void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
     nomonsters = clnomonsters = no_monsters;
     respawnparm = clrespawnparm = respawn;
     fastparm = clfastparm = fast;
+
+    /* update dsda skill_info fast monsters flag */
+    if (fast)
+        skill_info.flags |= SI_FAST_MONSTERS;
+    else
+        skill_info.flags &= ~SI_FAST_MONSTERS;
+
+    /* update dsda skill_info respawn time (12 seconds default if active) */
+    if (respawn)
+    {
+        if (skill_info.respawn_time <= 0)
+            skill_info.respawn_time = 12;
+    }
+    else
+    {
+        skill_info.respawn_time = 0;
+    }
+
+    G_RefreshFastMonsters();
 }
 
 void G_DoNewGame (void)
@@ -3113,6 +3138,11 @@ void G_InitNew(int skill, int episode, int map, dboolean prepare)
   dsda_ResetCommandHistory();
   automap_full = false;
   dsda_UpdateGameSkill(skill);
+  
+#ifdef XDRE
+  G_XDRE_SetDemoOptions(clnomonsters, clrespawnparm, clfastparm);
+#endif
+
   dsda_UpdateGameMap(episode, map);
 
   totalleveltimes = 0; // cph
@@ -3339,6 +3369,17 @@ const byte *G_ReadOptions(const byte *demo_p)
   respawnparm = *demo_p++;
   fastparm = *demo_p++;
   nomonsters = *demo_p++;
+  
+#ifdef XDRE
+  if (clrespawnparm || dsda_Flag(dsda_arg_respawn) || skill_info.respawn_time > 0)
+    respawnparm = 1;
+  if (clfastparm || dsda_Flag(dsda_arg_fast) || (skill_info.flags & SI_FAST_MONSTERS))
+    fastparm = 1;
+  if (clnomonsters || dsda_Flag(dsda_arg_nomonsters))
+    nomonsters = 1;
+
+  G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
+#endif
 
   demo_insurance = *demo_p++;              // killough 3/31/98
 
@@ -3706,6 +3747,11 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
     monster_friction = 0;             // killough 10/98
     help_friends = 0;                 // killough 9/9/98
     monkeys = 0;
+	
+#ifdef XDRE
+    /* Vanilla demos do not serialize an rng seed; default to index 0 */
+    rngseed = 0;
+#endif
 
     // killough 3/6/98: rearrange to fix savegame bugs (moved fastparm,
     // respawnparm, nomonsters flags to G_LoadOptions()/G_SaveOptions())
@@ -3725,6 +3771,10 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
       fastparm = *demo_p++;
       nomonsters = *demo_p++;
       consoleplayer = *demo_p++;
+	  
+	#ifdef XDRE
+      G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
+    #endif
     }
     else
     {
@@ -3929,15 +3979,13 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
     netgame = true;
   }
 
-  /* prevent G_ReloadDefaults/G_DoLoadLevel from resetting demo flags */
+#ifdef XDRE
+  G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
+#else
   clnomonsters = nomonsters;
   clrespawnparm = respawnparm;
   clfastparm = fastparm;
-
-  /* prevent DSDA PrepareInitNew/G_ReloadDefaults from stomping demo flags */
-  clnomonsters = nomonsters;
-  clrespawnparm = respawnparm;
-  clfastparm = fastparm;
+#endif
 
   if (!(params & RDH_SKIP_HEADER) && gameaction != ga_loadgame)
   {

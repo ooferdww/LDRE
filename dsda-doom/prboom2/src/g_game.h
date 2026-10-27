@@ -134,3 +134,7 @@ extern int pwad_help2_check;
 void G_Completed(int map, int position, int flags, angle_t angle);
 
 #endif
+
+#ifdef XDRE
+void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast);
+#endif

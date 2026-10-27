@@ -95,6 +95,10 @@ int monsters_infight = 0; // e6y: Dehacked support - monsters infight
 int maxammo[NUMAMMO]  = {200, 50, 300, 50, 0, 0}; // heretic +2 ammo types
 int clipammo[NUMAMMO] = { 10,  4,  20,  1, 0, 0}; // heretic +2 ammo types
 
+#ifdef XDRE
+int xDoneDamage;
+#endif
+
 //
 // GET STUFF
 //
@@ -1641,6 +1645,14 @@ void P_DamageMobj(mobj_t *target,mobj_t *inflictor, mobj_t *source, int damage)
       SB_PaletteFlash(false);
     }
   }
+
+#ifdef XDRE
+  /* attacks originating from player */
+  if (source && source->player && source->player == &players[consoleplayer])
+  {
+    xDoneDamage += damage;
+  }
+#endif
 
   dsda_WatchDamage(target, inflictor, source, damage);
 

@@ -61,6 +61,10 @@
 
 #include "heretic/def.h"
 
+#ifdef XDRE
+int xUseSuccess;
+#endif
+
 static mobj_t    *tmthing;
 static mobj_t    *tsthing; // hexen
 static fixed_t   tmx;
@@ -2717,7 +2721,12 @@ dboolean PTR_UseTraverse (intercept_t* in)
 
   //  return false;   // don't use back side
 
+#ifdef XDRE
+  if (P_UseSpecialLine (usething, in->d.line, side, false))
+    xUseSuccess = 1;
+#else
   P_UseSpecialLine (usething, in->d.line, side, false);
+#endif
 
   //WAS can't use for than one special line in a row
   //jff 3/21/98 NOW multiple use allowed with enabling line flag
