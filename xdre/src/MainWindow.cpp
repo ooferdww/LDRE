@@ -307,7 +307,7 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::DeleteTic:     xdre::deleteTic();      RS(); break;
         case XCmd::DeleteTicX:    xdre::deleteTicX(val);  RS(); break;
         case XCmd::NewTic:        xdre::newTic();         RS(); break;
-        case XCmd::ToggleBlood:   xdre::toggleBlood(); break; //MenuItem7->Check(xdre::getBlood());
+        case XCmd::ToggleBlood:   xdre::toggleBlood(); break;
         case XCmd::SetSavepoint:  xdre::setSavepoint();   RS(); break;
         case XCmd::UnsetSavepoint:xdre::unsetSavepoint(); RS(); break;
         case XCmd::Load:          Load();                       break;
@@ -441,6 +441,8 @@ void MainWindow::RS() { //RefreshStuff
     ticlist          ->EnsureVisible(xdre::getCurrentTic());
 
     ticlist->Refresh();
+	
+	xdre::doSdlEvents();
 }
 
 void MainWindow::Save() {

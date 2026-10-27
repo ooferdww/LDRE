@@ -49,6 +49,17 @@ public:
     const char* str;
 };
 
+static const int allowedComplevels[] = { 2, 3, 4, 9, 11, 21 };
+static const int numAllowedComplevels = sizeof(allowedComplevels) / sizeof(allowedComplevels[0]);
+
+static int ComplevelToChoiceIndex(int cl) {
+    for (int i = 0; i < numAllowedComplevels; ++i) {
+        if (allowedComplevels[i] == cl)
+            return i;
+    }
+    return 0; // default to cl2
+}
+
 int options[28];
 HeaderDialog::HeaderDialog(wxWindow* parent, wxWindowID id, const wxPoint& pos, const wxSize& size) {
     wxDialog::Create(parent, wxID_ANY, "Header editor", wxDefaultPosition, wxDefaultSize, wxDEFAULT_DIALOG_STYLE & ~wxRESIZE_BORDER);
@@ -75,29 +86,19 @@ HeaderDialog::HeaderDialog(wxWindow* parent, wxWindowID id, const wxPoint& pos, 
     compatFlagsText      = new wxStaticText(panel, wxID_ANY, "Compat\nflags",      wxPoint(16,  352), wxDefaultSize, 0); //options[26]
 
     complevelChoice = new wxChoice(panel, wxID_ANY, wxPoint(80, 8), wxSize(140, 28), wxArrayString{
-        "0 - Doom V1.2",
-        "1 - Doom v1.666",
         "2 - Doom v1.9",
-        "3 - Ultimate Doom & Doom95",
+        "3 - Ultimate Doom",
         "4 - Final Doom",
-        "5 - DOSDoom",
-        "6 - TASDoom",
-        "7 - Boom's inaccurate vanilla compatibility mode",
-        "8 - Boom v2.01",
-        "9 - Boom V2.02",
-        "10 - LxDoom",
+        "9 - Boom v2.02",
         "11 - MBF",
-        "12 - PrBoom v2.03beta",
-        "13 - PrBoom v2.1.0",
-        "14 - PrBoom v2.1.1 - 2.2.6",
-        "15 - PrBoom v2.3.x",
-        "16 - PrBoom v2.4.0",
-        "17 - Engine defaults (\"current version\")"}, 0, wxDefaultValidator); //options[0]
+        "21 - MBF21"}, 0, wxDefaultValidator); //options[0]
+
     deathmatchChoice = new wxChoice(panel, wxID_ANY, wxPoint(300, 8), wxSize(140, 28), wxArrayString{
         "0 - Single-player/Co-op",
         "1 - deathmatch",
         "2 - altdeath"}, 0, wxDefaultValidator); //options[4]
-    complevelChoice->SetSelection(options[0]);
+
+    complevelChoice->SetSelection(ComplevelToChoiceIndex(options[0]));
     deathmatchChoice->SetSelection(0);
 
     skillInput            = new wxTextCtrl(panel, wxID_ANY, "", wxPoint(68, 50),  wxSize(30, 22), wxTE_RIGHT, wxIntegerValidator<unsigned int>()); //options[1]
@@ -138,8 +139,8 @@ HeaderDialog::HeaderDialog(wxWindow* parent, wxWindowID id, const wxPoint& pos, 
     climbSteepStairsToggle          = new wxToggleButton(panel, wxID_ANY, "Climb steep stairs",           wxPoint(140, 350), wxSize(156, 22)); //options[25]
     longticsToggle                  = new wxToggleButton(panel, wxID_ANY, "Longtics",                     wxPoint(114, 144), wxSize(100, 22)); //options[27]
 
-    rngSeedSpinCtrl = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxPoint(302, 110), wxSize(136, 22), wxSP_ARROW_KEYS, 1, 1000000, 1); //options[16]
-    rngSeedSpinCtrl ->SetValue(wxString::FromCDouble(options[16], 0));
+    rngSeedSpinCtrl = new wxSpinCtrl(panel, wxID_ANY, wxEmptyString, wxPoint(302, 110), wxSize(136, 22), wxSP_ARROW_KEYS, 0, 2147483647, 0); //options[16]
+    rngSeedSpinCtrl->SetValue(wxString::Format("%u", (unsigned int)options[16]));
 
     //if ((wxString::FromCDouble(options[4],  0)) == "1") deathmatchCheckbox->SetValue(true); else deathmatchCheckbox->SetValue(false);
     if ((wxString::FromCDouble(options[5],  0)) == "1")    respawnToggle->SetValue(true); else    respawnToggle->SetValue(false);
@@ -191,24 +192,50 @@ HeaderDialog::HeaderDialog(wxWindow* parent, wxWindowID id, const wxPoint& pos, 
 
 HeaderDialog::~HeaderDialog() {} // Destructor, compilation fails if this is absent despite doing nothing
 
+void HeaderDialog::HarvestOptions() {
+    signed long i;
+    if (skillInput          ->GetValue().ToCLong(&i)) options[1] = i;
+    if (episodeInput        ->GetValue().ToCLong(&i)) options[2] = i;
+    if (mapInput            ->GetValue().ToCLong(&i)) options[3] = i;
+    if (consolePlayerInput  ->GetValue().ToCLong(&i)) options[8] = i;
+    if (options[8] > 3)
+        throw HeaderException("Invalid consoleplayer.");
+    if (variableFrictionInput->GetValue().ToCLong(&i)) options[11] = i;
+    if (dogsInput            ->GetValue().ToCLong(&i)) options[18] = i;
+    if (distFriendInput      ->GetValue().ToCLong(&i)) options[19] = i;
+    if (compatFlagsInput     ->GetValue().ToCLong(&i)) options[26] = i;
+
+    /* toggles */
+    options[5]  = respawnToggle->GetValue() ? 1 : 0;
+    options[6]  = fastToggle->GetValue() ? 1 : 0;
+    options[7]  = noMonstersToggle->GetValue() ? 1 : 0;
+    options[10] = monstersRememberTargetsToggle->GetValue() ? 1 : 0;
+    options[12] = weaponRecoilToggle->GetValue() ? 1 : 0;
+    options[13] = allowPushersToggle->GetValue() ? 1 : 0;
+    options[14] = playerBobbingToggle->GetValue() ? 1 : 0;
+    options[15] = demoInsuranceToggle->GetValue() ? 1 : 0;
+    options[16] = (int)rngSeedSpinCtrl->GetValue();
+    options[17] = monsterInfightingToggle->GetValue() ? 1 : 0;
+    options[20] = monstersCanGoBackwardsToggle->GetValue() ? 1 : 0;
+    options[21] = monstersAvoidHazardsToggle->GetValue() ? 1 : 0;
+    options[22] = frictionAppliesToMonstersToggle->GetValue() ? 1 : 0;
+    options[23] = monstersHelpFriendsToggle->GetValue() ? 1 : 0;
+    options[24] = dogsCanJumpDownToggle->GetValue() ? 1 : 0;
+    options[25] = climbSteepStairsToggle->GetValue() ? 1 : 0;
+    options[27] = longticsToggle->GetValue() ? 1 : 0;
+
+    /* players */
+    int players = 0;
+    if (player1Toggle->GetValue()) players += 1;
+    if (player2Toggle->GetValue()) players += 2;
+    if (player3Toggle->GetValue()) players += 4;
+    if (player4Toggle->GetValue()) players += 8;
+    options[9] = players;
+}
+
 void HeaderDialog::OnApply(wxCommandEvent& event) {
     try {
-        signed long i;
-        if (skillInput          ->GetValue().ToCLong(&i)) options[1] = i;
-        if (episodeInput        ->GetValue().ToCLong(&i)) options[2] = i;
-        if (mapInput            ->GetValue().ToCLong(&i)) options[3] = i;
-        if (consolePlayerInput  ->GetValue().ToCLong(&i)) options[8] = i;
-        if (options[8] > 3)
-            throw HeaderException("Invalid consoleplayer.");
-        if(variableFrictionInput->GetValue().ToCLong(&i)) options[11] = i;
-        if(dogsInput            ->GetValue().ToCLong(&i)) options[18] = i;
-        if(distFriendInput      ->GetValue().ToCLong(&i)) options[19] = i;
-        if(compatFlagsInput     ->GetValue().ToCLong(&i)) options[26] = i;
-
-        /* Force-read the toggle button */
-        options[7] = noMonstersToggle->GetValue() ? 1 : 0;
-        options[5] = respawnToggle->GetValue() ? 1 : 0;
-        options[6] = fastToggle->GetValue() ? 1 : 0;
+        HarvestOptions();
 
         xdre::changeOptions(options);
         MainWindow* XDREWindow = dynamic_cast<MainWindow*>(GetParent());
@@ -220,10 +247,10 @@ void HeaderDialog::OnApply(wxCommandEvent& event) {
 }
 
 void HeaderDialog::OnComplevelChoice(wxCommandEvent& event) {
-    if (complevelChoice->GetSelection() <= 17)
-        options[0] = complevelChoice->GetSelection();
-    else if (complevelChoice->GetSelection() == 18) // No complevel 18, 19 or 20
-        options[0] = 21;
+    int sel = complevelChoice->GetSelection();
+    if (sel >= 0 && sel < numAllowedComplevels) {
+        options[0] = allowedComplevels[sel];
+    }
 
     // Changes applied now immediately change the game screen AND the information in the XDRE screen
     xdre::changeOptions(options);
@@ -236,28 +263,16 @@ void HeaderDialog::OnDeathmatchChoice(wxCommandEvent& event) {
 }
 
 void HeaderDialog::OnGeneralToggle(wxCommandEvent& event) {
-    // if (deathmatchCheckbox                ->GetValue()) options[4]  = 1; else options[4]  = 0;
-    if (respawnToggle                   ->GetValue()) options[5]  = 1; else options[5]  = 0;
-    if (fastToggle                      ->GetValue()) options[6]  = 1; else options[6]  = 0;
-    if (noMonstersToggle                ->GetValue()) options[7]  = 1; else options[7]  = 0;
-    if (monstersRememberTargetsToggle   ->GetValue()) options[10] = 1; else options[10] = 0;
-    if (weaponRecoilToggle              ->GetValue()) options[12] = 1; else options[12] = 0;
-    if (allowPushersToggle              ->GetValue()) options[13] = 1; else options[13] = 0;
-    if (playerBobbingToggle             ->GetValue()) options[14] = 1; else options[14] = 0;
-    if (demoInsuranceToggle             ->GetValue()) options[15] = 1; else options[15] = 0;
-    options[16] = rngSeedSpinCtrl->GetValue(); // Okay fine, this isn't a toggle, but it's conveniently dealt with here
-    if (monsterInfightingToggle         ->GetValue()) options[17] = 1; else options[17] = 0;
-    if (monstersCanGoBackwardsToggle    ->GetValue()) options[20] = 1; else options[20] = 0;
-    if (monstersAvoidHazardsToggle      ->GetValue()) options[21] = 1; else options[21] = 0;
-    if (frictionAppliesToMonstersToggle ->GetValue()) options[22] = 1; else options[22] = 0;
-    if (monstersHelpFriendsToggle       ->GetValue()) options[23] = 1; else options[23] = 0;
-    if (dogsCanJumpDownToggle           ->GetValue()) options[24] = 1; else options[24] = 0;
-    if (climbSteepStairsToggle          ->GetValue()) options[25] = 1; else options[25] = 0;
-    if (longticsToggle                  ->GetValue()) options[27] = 1; else options[27] = 0;
+    try {
+        HarvestOptions();
 
-    xdre::changeOptions(options);
-    MainWindow* XDREWindow = dynamic_cast<MainWindow*>(GetParent());
-    XDREWindow->MainWindow::RS();
+        xdre::changeOptions(options);
+        MainWindow* XDREWindow = dynamic_cast<MainWindow*>(GetParent());
+        XDREWindow->MainWindow::RS();
+    }
+    catch(HeaderException& e) {
+        wxMessageBox(e.what(), "Invalid value(s)", wxOK|wxCENTRE|wxICON_ERROR, this);
+    }
 }
 
 void HeaderDialog::OnPlayerToggle(wxCommandEvent& event) {

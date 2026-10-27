@@ -77,6 +77,7 @@ class HeaderDialog: public wxDialog {
         void OnDeathmatchChoice(wxCommandEvent& event);
         void OnGeneralToggle(wxCommandEvent& event);
         void OnPlayerToggle(wxCommandEvent& event);
+		void HarvestOptions();
 };
 
 #endif //__HEADERDIALOG_HPP

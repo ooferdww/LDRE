@@ -18,6 +18,7 @@ extern "C" {
     #include "doomstat.h"
     #include "d_ticcmd.h"
     #include "cstuff.h"
+	#include "dsda/configuration.h"
 
     void mainDoom(int argc, char** argv);
     void D_Display(void);
@@ -87,11 +88,9 @@ void display() {
     if (gamestate == GS_LEVEL) {
         if (players[displayplayer].mo != NULL) {
             D_Display();
-            I_FinishUpdate();
         }
     } else if (gamestate == GS_INTERMISSION || gamestate == GS_FINALE) {
         D_Display();
-        I_FinishUpdate();
     }
 }
 
@@ -131,6 +130,10 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     }
 
     displayplayer = consoleplayer;
+	
+	/* display fix */
+	goForward(1);
+	display();
 
     return true;
 }
@@ -265,8 +268,11 @@ void goBack(int numTics) {
     }
 
     if (!x_loadSavepoint(destTic)) {
+        /* only advance valid player streams */
         for (int p = 0; p < 4; ++p) {
-            std::advance(nextTic[p], gametic - oldTic);
+            if (playeringameGet(p) && !tics[p].empty()) {
+                std::advance(nextTic[p], gametic - oldTic);
+            }
         }
         goForward(destTic - gametic);
     } else {
@@ -277,7 +283,9 @@ void goBack(int numTics) {
         XDRE_ReadDemoHeader(header, headerSize);
         playeringame[0] = true;
         for (int p = 0; p < 4; ++p) {
-            nextTic[p] = std::begin(tics[p]);
+            if (playeringameGet(p) && !tics[p].empty()) {
+                nextTic[p] = std::begin(tics[p]);
+            }
         }
         goForward(destTic);
     }
@@ -477,6 +485,10 @@ void xdre::init(int argc, char** argv) {
     palette_onbonus = 0;
     palette_ondamage = 0;
     palette_onpowers = 0;
+	
+	dsda_UpdateIntConfig(dsda_config_palette_ondamage, 0, false);
+    dsda_UpdateIntConfig(dsda_config_palette_onbonus,  0, false);
+    dsda_UpdateIntConfig(dsda_config_palette_onpowers, 0, false);
 
     savepointStyle = SpStyle::SP_START;
 
@@ -715,6 +727,10 @@ void xdre::toggleBlood() {
     palette_onbonus ^= 1;
     palette_ondamage ^= 1;
     palette_onpowers ^= 1;
+	
+	dsda_UpdateIntConfig(dsda_config_palette_ondamage, palette_ondamage, false);
+    dsda_UpdateIntConfig(dsda_config_palette_onbonus,  palette_onbonus,  false);
+    dsda_UpdateIntConfig(dsda_config_palette_onpowers, palette_onpowers, false);
 
     if (gamestate == GS_LEVEL) {
         ST_Start();

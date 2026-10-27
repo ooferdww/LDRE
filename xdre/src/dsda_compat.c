@@ -31,6 +31,7 @@
 #include "r_fps.h"
 
 extern SDL_Window *sdl_window;
+extern void dsda_UpdateFlag(dsda_arg_identifier_t id, dboolean found);
 
 extern thinker_t thinkercap;
 extern int dogs;
@@ -38,8 +39,8 @@ extern int dogs;
 /* g_game.c shared */
 extern const ticcmd_t *(*g_xdre_cmd_override)(int player);
 
-int xUseSuccess = 0;
-int xDoneDamage = 0;
+extern int xUseSuccess;
+extern int xDoneDamage;
 
 int palette_ondamage = 0;
 int palette_onbonus  = 0;
@@ -64,7 +65,8 @@ dboolean I_Interrupted(void) {
 
 void I_Init(void) {
     dsda_ResetTimeFunctions(fastdemo);
-    I_InitSound();
+    if (!dsda_Flag(dsda_arg_nosound))
+        I_InitSound();
 }
 
 void I_Init2(void) {
@@ -98,6 +100,14 @@ void I_SafeExit(int rc) {
 
 void mainDoom(int argc, char** argv) {
     dsda_ParseCommandLineArgs(argc, argv);
+	
+	/* force -nosound and -nomouse */
+    dsda_UpdateFlag(dsda_arg_nosound, true);
+    dsda_UpdateFlag(dsda_arg_nomouse, true);
+	
+	nosfxparm = true;
+    nomusicparm = true;
+	
     M_LoadDefaults();
     setlocale(LC_TIME, "");
     I_PreInitGraphics();
@@ -147,6 +157,8 @@ void mainDoom(int argc, char** argv) {
 
     movement_smooth = 0;
     demo_smoothturns = 0;
+	
+	dsda_UpdateIntConfig(dsda_config_uncapped_framerate, 0, false);
 }
 
 /* i/o */

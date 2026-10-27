@@ -24,6 +24,10 @@
 #include "p_tick.h"
 #include "p_setup.h"
 #include "dsda/args.h"
+#include "dsda/skill_info.h"
+#include "d_main.h"
+#include "smooth.h"
+#include "r_fps.h"
 
 #ifndef MAXPLAYERS
 #define MAXPLAYERS 4
@@ -39,23 +43,25 @@ extern dboolean setsizeneeded;
 extern byte* savebuffer;
 extern size_t save_size;
 extern void P_SetSaveBuffer(byte *buf, int size);
+extern byte* demobuffer;
+extern dboolean respawnmonsters;
 
 extern int basetic;
 
 extern int numsectors; 
 extern sector_t* sectors; 
-int secID = -1;
+int secID = 0;
 int xSectorInfo[3];
 
 extern thinker_t thinkercap;
 void P_MobjThinker(mobj_t *mobj);
-int thingID = -1;
+int thingID = 0;
 int xThingInfo[8];
 
 extern int numlines;
 extern line_t* lines;
-int xLineId = -1;
-int xLineCrossed = 0;
+int xLineId = 0;
+extern int xLineCrossed;
 int xLineVertexes[2][2];
 
 float angles = 16384.0f;
@@ -89,28 +95,21 @@ void playeringameSet(int plr, int val) {
 }
 
 void x_setLinedefCheck(int linedef) {
-    int i;
-
     if (linedef == -1)
         linedef = xLineId;
 
     xLineId = -1;
-    for (i = 0; i < numlines; ++i) {
-        if (linedef == i) {
-            xLineId = i;
-            xLineVertexes[0][0] = lines[i].v1->x;
-            xLineVertexes[0][1] = lines[i].v1->y;
-            xLineVertexes[1][0] = lines[i].v2->x;
-            xLineVertexes[1][1] = lines[i].v2->y;
-            break;
-        }
-    }
+    xLineVertexes[0][0] = 0;
+    xLineVertexes[0][1] = 0;
+    xLineVertexes[1][0] = 0;
+    xLineVertexes[1][1] = 0;
 
-    if (xLineId == -1) {
-        xLineVertexes[0][0] = 0;
-        xLineVertexes[0][1] = 0;
-        xLineVertexes[1][0] = 0;
-        xLineVertexes[1][1] = 0;
+    if (linedef >= 0 && linedef < numlines) {
+        xLineId = linedef;
+        xLineVertexes[0][0] = lines[linedef].v1->x;
+        xLineVertexes[0][1] = lines[linedef].v1->y;
+        xLineVertexes[1][0] = lines[linedef].v2->x;
+        xLineVertexes[1][1] = lines[linedef].v2->y;
     }
 }
 
@@ -121,26 +120,22 @@ void x_setSectorCheck(int sector) {
         sector = secID;
 
     secID = -1;
-    for (i = 0; i < numsectors; ++i) {
-        if (sector == i) {
-            secID = i;
-            xSectorInfo[0] = sectors[i].floorheight;
-            xSectorInfo[1] = sectors[i].ceilingheight;
-            xSectorInfo[2] = sectors[i].special;
-            break;
-        }
+    for (i = 0; i < 3; ++i) {
+        xSectorInfo[i] = 0;
     }
 
-    if (secID == -1) {
-        for (i = 0; i < 3; ++i) {
-            xSectorInfo[i] = 0;
-        }
+    if (sector >= 0 && sector < numsectors) {
+        secID = sector;
+        xSectorInfo[0] = sectors[sector].floorheight;
+        xSectorInfo[1] = sectors[sector].ceilingheight;
+        xSectorInfo[2] = sectors[sector].special;
     }
 }
 
 void x_setThingCheck(int index) {
     int i = 0;
     thinker_t *th;
+    mobj_t *target_mo = NULL;
 
     if (index == -1)
         index = thingID;
@@ -153,24 +148,40 @@ void x_setThingCheck(int index) {
     if (index < 0 || gamestate != GS_LEVEL)
         return;
 
-    i = 0;
-    for (th = thinkercap.next; th != &thinkercap; th = th->next) {
-        if ((void*)th->function == (void*)P_MobjThinker) {
-            if (i == index) {
-                mobj_t *mo = (mobj_t *)th;
-                thingID = index;
-                xThingInfo[0] = mo->x;
-                xThingInfo[1] = mo->y;
-                xThingInfo[2] = mo->z;
-                xThingInfo[3] = mo->radius;
-                xThingInfo[4] = mo->tics;
-                xThingInfo[5] = mo->health;
-                xThingInfo[6] = mo->reactiontime;
-                xThingInfo[7] = mo->threshold;
-                return;
-            }
-            ++i;
+    /* Index 0 is always the active console/display player */
+    if (index == 0) {
+        if (players[displayplayer].mo) {
+            target_mo = players[displayplayer].mo;
+            thingID = 0;
         }
+    } else {
+        /* Indices 1..N scan through non-player map mobjs */
+        i = 1;
+        for (th = thinkercap.next; th != &thinkercap; th = th->next) {
+            if ((void*)th->function == (void*)P_MobjThinker) {
+                mobj_t *mo = (mobj_t *)th;
+                if (mo->player)
+                    continue; /* Skip player mobjs in this list */
+
+                if (i == index) {
+                    target_mo = mo;
+                    thingID = index;
+                    break;
+                }
+                ++i;
+            }
+        }
+    }
+
+    if (target_mo) {
+        xThingInfo[0] = target_mo->x;
+        xThingInfo[1] = target_mo->y;
+        xThingInfo[2] = target_mo->z;
+        xThingInfo[3] = target_mo->radius;
+        xThingInfo[4] = target_mo->tics;
+        xThingInfo[5] = target_mo->health;
+        xThingInfo[6] = target_mo->reactiontime;
+        xThingInfo[7] = target_mo->threshold;
     }
 }
 
@@ -260,9 +271,9 @@ void x_getOptions(int options[]) {
     options[2] = gameepisode;
     options[3] = gamemap;
     options[4] = deathmatch;
-    options[5] = respawnparm;
-    options[6] = fastparm;
-    options[7] = nomonsters;
+    options[5] = respawnparm || clrespawnparm || dsda_Flag(dsda_arg_respawn) || (skill_info.respawn_time > 0);
+    options[6] = fastparm || clfastparm || dsda_Flag(dsda_arg_fast) || (skill_info.flags & SI_FAST_MONSTERS);
+    options[7] = nomonsters || clnomonsters || dsda_Flag(dsda_arg_nomonsters);
     options[8] = consoleplayer;
     options[9] = 0;
 
@@ -296,7 +307,7 @@ void x_changeOptions(int options[]) {
     int i;
 
     compatibility_level = options[0];
-    gameskill     = options[1] - 1; /* 1-5 converted to internal 0-4 */
+    gameskill     = options[1] - 1;
     gameepisode   = options[2];
     gamemap       = options[3];
     deathmatch    = options[4];
@@ -305,7 +316,6 @@ void x_changeOptions(int options[]) {
     nomonsters    = options[7];
     displayplayer = consoleplayer = options[8];
 
-    /* update baseline arguments, lowkey broken right now */
     G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 
     for (i = 0; i < 4; i++) {
@@ -326,7 +336,7 @@ void x_changeOptions(int options[]) {
     allow_pushers         = options[13];
     player_bobbing        = options[14];
     demo_insurance        = options[15];
-    rngseed               = options[16];
+    rngseed               = (unsigned int)options[16];
     monster_infighting    = options[17];
     dogs                  = options[18];
     distfriend            = options[19];
@@ -342,6 +352,11 @@ void x_changeOptions(int options[]) {
 
     /* reinit compat table */
     G_Compatibility();
+	
+    /* re-seed prng if seed was set */
+    if (compatibility_level >= boom_compatibility_compatibility) {
+        M_ClearRandom();
+    }
 }
 
 void x_initHeader(unsigned char* demo_p) {
@@ -523,6 +538,9 @@ int x_setSavepoint(int isUserSave) {
     }
 
     savepoints[map].save = (byte*)malloc(XDRE_SAVEGAMESIZE);
+    if (!savepoints[map].save)
+        return 1;
+
     savepoints[map].tic = gametic;
 
     /* init save buffer */
@@ -533,7 +551,6 @@ int x_setSavepoint(int isUserSave) {
     *save_p++ = (byte)gameepisode;
     *save_p++ = (byte)gamemap;
 
-    /* 4 bytes savepoint */
     for (i = 0; i < 4; ++i) {
         *save_p++ = (byte)playeringame[i];
     }
@@ -551,18 +568,24 @@ int x_setSavepoint(int isUserSave) {
     memcpy(save_p, &tic_diff, sizeof(tic_diff));
     save_p += sizeof(tic_diff);
 
-    P_ThinkerToIndex();
-    P_ArchiveRNG();
+    /* dsda_archiveall ripoff */
+    P_ArchiveACS();
     P_ArchivePlayers();
+    P_ThinkerToIndex();
     P_ArchiveWorld();
+    P_ArchivePolyobjs();
     P_ArchiveThinkers();
     P_ArchiveScripts();
+    P_ArchiveSounds();
+    P_ArchiveAmbientSound();
+    P_ArchiveMisc();
     P_IndexToThinker();
+    P_ArchiveRNG();
     P_ArchiveMap();
 
     *save_p++ = 0xe6;
 
-    /* savebuffer could have been reallocated if it exceeded XDRE_SAVEGAMESIZE */
+	/* savebuffer could have been reallocated if it exceeded XDRE_SAVEGAMESIZE */
     savepoints[map].save = savebuffer;
     save_p = savebuffer = NULL;
     return 0;
@@ -606,12 +629,15 @@ int x_loadSavepoint(int dest) {
     if (saved_idmus == 0 || saved_idmus == 255)
         saved_idmus = -1;
 
-    src = G_ReadOptions(src);
+    src = (byte *)G_ReadOptions(src);
     G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 
-    /* reset music and load level w g_initnew */
+    /* dsda_unarchivecontext ripoff */
     idmusnum = -1;
     G_InitNew(gameskill, gameepisode, gamemap, false);
+	
+    /* neutralize screen wipe */
+    wipegamestate = GS_LEVEL;
 
     /* restore music */
     if (saved_idmus != -1) {
@@ -635,14 +661,23 @@ int x_loadSavepoint(int dest) {
 
     gamestate = GS_LEVEL;
 
-    P_UnArchiveRNG();
-    P_UnArchivePlayers();
+    /* dsda_unarchiveall ripoff */
     P_MapStart();
+    P_UnArchiveACS();
+    P_UnArchivePlayers();
     P_UnArchiveWorld();
+    P_UnArchivePolyobjs();
     P_UnArchiveThinkers();
     P_UnArchiveScripts();
+    P_UnArchiveSounds();
+    P_UnArchiveAmbientSound();
+    P_UnArchiveMisc();
+    P_UnArchiveRNG();
     P_UnArchiveMap();
     P_MapEnd();
+
+    R_ActivateSectorInterpolations();
+    R_SmoothPlaying_Reset(NULL);
 
     RecalculateDrawnSubsectors();
 
