@@ -2924,9 +2924,13 @@ void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
 
     /* update dsda skill_info fast monsters flag */
     if (fast)
+    {
         skill_info.flags |= SI_FAST_MONSTERS;
+    }
     else
+    {
         skill_info.flags &= ~SI_FAST_MONSTERS;
+    }
 
     /* update dsda skill_info respawn time */
     if (respawn)
@@ -3393,15 +3397,8 @@ const byte *G_ReadOptions(const byte *demo_p)
   respawnparm = *demo_p++;
   fastparm = *demo_p++;
   nomonsters = *demo_p++;
-  
-#ifdef XDRE
-  if (clrespawnparm || dsda_Flag(dsda_arg_respawn) || skill_info.respawn_time > 0)
-    respawnparm = 1;
-  if (clfastparm || dsda_Flag(dsda_arg_fast) || (skill_info.flags & SI_FAST_MONSTERS))
-    fastparm = 1;
-  if (clnomonsters || dsda_Flag(dsda_arg_nomonsters))
-    nomonsters = 1;
 
+#ifdef XDRE
   G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 #endif
 
@@ -3795,7 +3792,7 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
       fastparm = *demo_p++;
       nomonsters = *demo_p++;
       consoleplayer = *demo_p++;
-	  
+
 #ifdef XDRE
       G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 #endif

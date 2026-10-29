@@ -176,9 +176,6 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
         return false;
     }
 
-    /* demo opts from first read */
-    G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
-
     std::size_t const newHeaderSize = static_cast<std::size_t>(tics_p - demo_p);
     header.assign(demo_p, demo_p + newHeaderSize);
 
@@ -186,7 +183,7 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     x_clearUserSavepoint();
     for (int p = 0; p < 4; ++p) {
         tics[p].clear();
-		tics[p].shrink_to_fit();
+        tics[p].shrink_to_fit();
     }
 
     readTics(tics_p, size - (tics_p - demo_p));
@@ -195,10 +192,10 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     rewindDemoToStart();
 
     displayplayer = consoleplayer;
-	
-	/* display fix */
-	goForward(1);
-	display();
+
+    /* display fix */
+    goForward(1);
+    display();
 
     return true;
 }
@@ -759,81 +756,6 @@ void xdre::seekDemo(int numTics) {
     display();
 }
 
-void xdre::copyTic() {
-    if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
-        return;
-    }
-
-    /* snapshot the index of insertion */
-    auto const insertIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]));
-    
-    /* local copy */
-    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
-
-    /* clean WT and wait for others */
-    ticcmd_t cleanWaitTic;
-    std::memset(&cleanWaitTic, 0, sizeof(cleanWaitTic));
-
-    /* insert into every active player at same index */
-    for (int p = 0; p < 4; ++p) {
-        if (!playeringameGet(p)) continue;
-
-        auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
-        auto safeInsertIdx = std::min(insertIdx, tics[p].size());
-
-        if (p == displayplayer) {
-            nextTic[p] = tics[p].emplace(tics[p].begin() + safeInsertIdx, cmdToCopy);
-        } else {
-            tics[p].emplace(tics[p].begin() + safeInsertIdx, cleanWaitTic);
-            if (otherOffset >= safeInsertIdx) {
-                ++otherOffset;
-            }
-            nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
-        }
-    }
-
-    syncActivePlayerTics();
-    goForward(1);
-    display();
-}
-
-void xdre::copyTicX(int val) {
-    if (val < 1 || tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
-        return;
-    }
-
-    // Copy the single source command
-    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
-
-    ticcmd_t cleanWaitTic;
-    std::memset(&cleanWaitTic, 0, sizeof(cleanWaitTic));
-
-    for (int i = 0; i < val; ++i) {
-        auto const insertIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]));
-
-        for (int p = 0; p < 4; ++p) {
-            if (!playeringameGet(p)) continue;
-
-            auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
-            auto safeInsertIdx = std::min(insertIdx, tics[p].size());
-
-            if (p == displayplayer) {
-                nextTic[p] = tics[p].emplace(tics[p].begin() + safeInsertIdx, cmdToCopy);
-            } else {
-                tics[p].emplace(tics[p].begin() + safeInsertIdx, cleanWaitTic);
-                if (otherOffset >= safeInsertIdx) {
-                    ++otherOffset;
-                }
-                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
-            }
-        }
-    }
-
-    syncActivePlayerTics();
-    goForward(val);
-    display();
-}
-
 static inline bool isWaitTic(ticcmd_t const& cmd) {
     return cmd.forwardmove == 0 &&
            cmd.sidemove == 0 &&
@@ -841,46 +763,126 @@ static inline bool isWaitTic(ticcmd_t const& cmd) {
            cmd.buttons == 0;
 }
 
+static void padPlayersToLength(std::size_t targetCount) {
+    ticcmd_t const wt{};
+    for (int p = 0; p < 4; ++p) {
+        if (!playeringameGet(p)) continue;
+
+        if (tics[p].size() < targetCount) {
+            auto offset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+            tics[p].resize(targetCount, wt);
+            nextTic[p] = tics[p].begin() + std::min(offset, tics[p].size());
+        }
+    }
+}
+
+/* helper, finds last WT after action across all players */
+static std::ptrdiff_t getLastActionIndex(int p) {
+    if (!playeringameGet(p) || tics[p].empty()) {
+        return -1;
+    }
+    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(tics[p].size()) - 1; i >= 0; --i) {
+        if (!isWaitTic(tics[p][static_cast<std::size_t>(i)])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void xdre::newTic() {
+    auto const curIdx = std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]);
+
+    /* insert WT to active player */
+    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});
+
+    /* if length is longer than other players, pad them with WT */
+    padPlayersToLength(tics[displayplayer].size());
+
+    goForward(1);
+    display();
+}
+
+void xdre::copyTic() {
+    if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+        return;
+    }
+
+    /* copy the single source command */
+    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
+
+    /* insert only into active player */
+    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], cmdToCopy);
+
+    /* if length is longer than other players, pad them with WT */ 
+    padPlayersToLength(tics[displayplayer].size());
+
+    goForward(1);
+    display();
+}
+
 void xdre::deleteTic() {
-    if (tics[displayplayer].size() <= 1) {
+    auto& curTics = tics[displayplayer];
+    if (curTics.empty() || nextTic[displayplayer] == std::begin(curTics)) {
         return;
     }
 
-    bool const atEnd = (nextTic[displayplayer] == std::end(tics[displayplayer]));
-    auto ticToErase = atEnd ? std::prev(nextTic[displayplayer]) : nextTic[displayplayer];
-    auto const curIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), ticToErase));
+    auto prevIt = std::prev(nextTic[displayplayer]);
+    auto const curIdx = static_cast<std::ptrdiff_t>(std::distance(std::begin(curTics), prevIt));
 
-    /* prevent time: 0.00 leak */
-    if (curIdx < 1) {
-        return;
-    }
+    std::vector<ticcmd_t>::iterator ticToErase;
+    std::ptrdiff_t targetIdx;
+    bool wasAtLastTic = false;
 
-    if (atEnd) {
-        tics[displayplayer].erase(ticToErase);
-        nextTic[displayplayer] = std::end(tics[displayplayer]);
+    if (curIdx == 0) {
+        /* standing here.. i realize, you were just like me
+         * trying to make history. but who's to judge the
+         * right from wrong? and when our guard is down
+         * i think we'll both agree
+         * THAT VIOLENCE BREEDS VIOLENCE
+         * BUT IN THE END IT HAS TO BE THIS WAAAAAY */
+        if (nextTic[displayplayer] == std::end(curTics)) {
+            return; /* return if nothing left below 0.03 */
+        }
+
+        ticToErase = nextTic[displayplayer];
+        targetIdx = 1;
+        wasAtLastTic = false;
     } else {
-        nextTic[displayplayer] = tics[displayplayer].erase(ticToErase);
+        /* del selected tic */
+        ticToErase = prevIt;
+        targetIdx = curIdx;
+        wasAtLastTic = (nextTic[displayplayer] == std::end(curTics));
     }
 
-    /* critical: only erase tics from others if it's WT */
+    /* check for last action tic across every player and
+     * do not erase past that */
     for (int p = 0; p < 4; ++p) {
         if (p == displayplayer || !playeringameGet(p)) continue;
 
-        if (curIdx < tics[p].size()) {
-            if (isWaitTic(tics[p][curIdx])) {
-                auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
-                tics[p].erase(tics[p].begin() + curIdx);
-                if (otherOffset > curIdx && otherOffset > 0) {
-                    --otherOffset;
-                }
-                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
-            }
+        std::ptrdiff_t const lastAction = getLastActionIndex(p);
+        if (lastAction >= targetIdx) {
+            return;
         }
     }
 
-    invalidateSavepointsAfter(static_cast<int>(curIdx));
+    nextTic[displayplayer] = curTics.erase(ticToErase);
 
-    if (atEnd) {
+    /* trim WT tics from players */
+    std::size_t const newTargetSize = curTics.size();
+    for (int p = 0; p < 4; ++p) {
+        if (p == displayplayer || !playeringameGet(p)) continue;
+
+        if (tics[p].size() > newTargetSize) {
+            auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+            tics[p].resize(newTargetSize);
+            nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+        }
+    }
+
+    invalidateSavepointsAfter(static_cast<int>(targetIdx));
+
+    /* only step back if final tic was deleted */
+    if (wasAtLastTic) {
         goBack(1);
     } else {
         goBack(0);
@@ -889,89 +891,38 @@ void xdre::deleteTic() {
     display();
 }
 
-void xdre::deleteTicX(int val) {
-    if (val < 1 || tics[displayplayer].size() <= 1) {
+/* trims WT across all active players */
+static void trimMultiplayerTrailingWaitTics() {
+    int activeCount = 0;
+    std::ptrdiff_t globalLastAction = -1;
+
+    for (int p = 0; p < 4; ++p) {
+        if (!playeringameGet(p)) continue;
+        ++activeCount;
+
+        std::ptrdiff_t const lastAction = getLastActionIndex(p);
+        if (lastAction > globalLastAction) {
+            globalLastAction = lastAction;
+        }
+    }
+
+    /* only apply to multiplayer games */
+    if (activeCount <= 1) {
         return;
     }
 
-    std::size_t deletedCount = 0;
-    bool wasAtEnd = false;
-    std::size_t lastIdx = 0;
+    /* if nobody has actions, keep one WT tic */
+    std::size_t const targetSize = (globalLastAction < 0) ? 1 : static_cast<std::size_t>(globalLastAction + 1);
 
-    for (int i = 0; i < val; ++i) {
-        if (tics[displayplayer].size() <= 1) {
-            break;
-        }
-
-        bool const atEnd = (nextTic[displayplayer] == std::end(tics[displayplayer]));
-        wasAtEnd = atEnd;
-
-        auto ticToErase = atEnd ? std::prev(nextTic[displayplayer]) : nextTic[displayplayer];
-        auto const curIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), ticToErase));
-
-        if (curIdx < 1) {
-            break;
-        }
-
-        lastIdx = curIdx;
-
-        if (atEnd) {
-            tics[displayplayer].erase(ticToErase);
-            nextTic[displayplayer] = std::end(tics[displayplayer]);
-        } else {
-            nextTic[displayplayer] = tics[displayplayer].erase(ticToErase);
-        }
-
-        /* critical: only erase tics from others if it's WT */
-        for (int p = 0; p < 4; ++p) {
-            if (p == displayplayer || !playeringameGet(p)) continue;
-
-            if (curIdx < tics[p].size()) {
-                if (isWaitTic(tics[p][curIdx])) {
-                    auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
-                    tics[p].erase(tics[p].begin() + curIdx);
-                    if (otherOffset > curIdx && otherOffset > 0) {
-                        --otherOffset;
-                    }
-                    nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
-                }
-            }
-        }
-        ++deletedCount;
-    }
-
-    if (deletedCount == 0) return;
-
-    invalidateSavepointsAfter(static_cast<int>(lastIdx));
-
-    if (wasAtEnd) {
-        goBack(static_cast<int>(deletedCount));
-    } else {
-        goBack(0);
-    }
-
-    display();
-}
-
-void xdre::newTic() {
-    auto const curIdx = std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]);
-
-    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});
-
-    /* insert WT for all players */
     for (int p = 0; p < 4; ++p) {
-        if (p == displayplayer || !playeringameGet(p)) continue;
-        auto otherOffset = std::distance(std::begin(tics[p]), nextTic[p]);
-        auto insertPos = tics[p].begin() + std::min<std::size_t>(curIdx, tics[p].size());
-        tics[p].emplace(insertPos, ticcmd_t{});
+        if (!playeringameGet(p)) continue;
 
-        if (otherOffset >= curIdx) ++otherOffset;
-        nextTic[p] = tics[p].begin() + std::min<std::size_t>(otherOffset, tics[p].size());
+        if (tics[p].size() > targetSize) {
+            auto offset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+            tics[p].resize(targetSize);
+            nextTic[p] = tics[p].begin() + std::min(offset, tics[p].size());
+        }
     }
-
-    syncActivePlayerTics();
-    goForward(1);
-    display();
 }
 
 void xdre::changePlayerView(unsigned int plr) {
@@ -985,7 +936,10 @@ void xdre::changePlayerView(unsigned int plr) {
         return;
     }
 
-    /* sync tics */
+    /* trim WT */
+    trimMultiplayerTrailingWaitTics();
+
+    /* Ensure all active players are padded to the same length */
     syncActivePlayerTics();
 
     displayplayer = plr - 1;
@@ -1410,3 +1364,107 @@ int xdre::getCurrentTurn(int i, int listLength) {
     auto cmd = getRelativeTic(i, listLength);
     return cmd ? cmd->angleturn : 0;
 }
+
+/* graveyard of currently defunct functions
+ * using these will probably give you a bad time lol */
+
+void xdre::copyTicX(int val) {
+    if (val < 1 || tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+        return;
+    }
+
+    // Copy the single source command
+    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
+
+    ticcmd_t cleanWaitTic;
+    std::memset(&cleanWaitTic, 0, sizeof(cleanWaitTic));
+
+    for (int i = 0; i < val; ++i) {
+        auto const insertIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]));
+
+        for (int p = 0; p < 4; ++p) {
+            if (!playeringameGet(p)) continue;
+
+            auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+            auto safeInsertIdx = std::min(insertIdx, tics[p].size());
+
+            if (p == displayplayer) {
+                nextTic[p] = tics[p].emplace(tics[p].begin() + safeInsertIdx, cmdToCopy);
+            } else {
+                tics[p].emplace(tics[p].begin() + safeInsertIdx, cleanWaitTic);
+                if (otherOffset >= safeInsertIdx) {
+                    ++otherOffset;
+                }
+                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+            }
+        }
+    }
+
+    syncActivePlayerTics();
+    goForward(val);
+    display();
+}
+
+void xdre::deleteTicX(int val) {
+    if (val < 1 || tics[displayplayer].size() <= 1) {
+        return;
+    }
+
+    std::size_t deletedCount = 0;
+    bool wasAtEnd = false;
+    std::size_t lastIdx = 0;
+
+    for (int i = 0; i < val; ++i) {
+        if (tics[displayplayer].size() <= 1) {
+            break;
+        }
+
+        bool const atEnd = (nextTic[displayplayer] == std::end(tics[displayplayer]));
+        wasAtEnd = atEnd;
+
+        auto ticToErase = atEnd ? std::prev(nextTic[displayplayer]) : nextTic[displayplayer];
+        auto const curIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), ticToErase));
+
+        if (curIdx < 1) {
+            break;
+        }
+
+        lastIdx = curIdx;
+
+        if (atEnd) {
+            tics[displayplayer].erase(ticToErase);
+            nextTic[displayplayer] = std::end(tics[displayplayer]);
+        } else {
+            nextTic[displayplayer] = tics[displayplayer].erase(ticToErase);
+        }
+
+        /* critical: only erase tics from others if it's WT */
+        for (int p = 0; p < 4; ++p) {
+            if (p == displayplayer || !playeringameGet(p)) continue;
+
+            if (curIdx < tics[p].size()) {
+                auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+                tics[p].erase(tics[p].begin() + curIdx);
+                if (otherOffset > curIdx && otherOffset > 0) {
+                    --otherOffset;
+                }
+                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+            }
+        }
+        ++deletedCount;
+    }
+
+    if (deletedCount == 0) return;
+
+    invalidateSavepointsAfter(static_cast<int>(lastIdx));
+
+    if (wasAtEnd) {
+        goBack(static_cast<int>(deletedCount));
+    } else {
+        goBack(0);
+    }
+
+    display();
+}
+
+/* end of graveyard of currently defunct functions */
