@@ -45,6 +45,7 @@ extern byte* savebuffer;
 extern void P_SetSaveBuffer(byte *buf, int size);
 extern byte* demobuffer;
 extern dboolean respawnmonsters;
+extern ticcmd_t netcmds[4];
 
 extern int basetic;
 
@@ -53,7 +54,7 @@ extern sector_t* sectors;
 int secID = 0;
 int xSectorInfo[3];
 
-extern thinker_t thinkercap;
+extern thinker_t thinkerclasscap[];
 void P_MobjThinker(mobj_t *mobj);
 int thingID = 0;
 int xThingInfo[8];
@@ -157,14 +158,14 @@ void x_setThingCheck(int index) {
     if (index < 0 || gamestate != GS_LEVEL)
         return;
 
-    /* Index 0 is always the active console/display player */
+    /* active console/display player */
     if (index == 0) {
         if (players[displayplayer].mo) {
             target_mo = players[displayplayer].mo;
             thingID = 0;
         }
     } else {
-        /* Indices 1..N scan through non-player map mobjs */
+        /* scan thru non-player mobj */
         i = 1;
         for (th = thinkercap.next; th != &thinkercap; th = th->next) {
             if ((void*)th->function == (void*)P_MobjThinker) {
@@ -336,7 +337,7 @@ void x_changeOptions(int options[]) {
         }
     }
 
-    /* Safety fallback: Player 0 must always be active if mask is empty */
+    /* player 0 must be active if mask is empty */
     if (!any_active) {
         plr_active[0] = true;
         lastplayer = 0;
@@ -639,6 +640,7 @@ int x_loadSavepoint(int dest) {
     byte *src;
     int saved_idmus;
     int tic_diff;
+    dboolean saved_playeringame[MAX_MAXPLAYERS];
 
     map = x_getSavepointIndex(dest);
     if (map < 0 || map >= MAXSSP || !savepoints[map].save) {
@@ -649,7 +651,7 @@ int x_loadSavepoint(int dest) {
     if (map != 0)
         x_clearUserSavepoint();
 
-    /* read params with local pointer first */
+    /* read params from savebuffer header */
     src = savepoints[map].save;
 
     gametic = savepoints[map].tic;
@@ -660,12 +662,12 @@ int x_loadSavepoint(int dest) {
     gameepisode = *src++;
     gamemap     = *src++;
 
-    /* 4 bytes savepoint */
+    /* read 4 players in game */
     for (i = 0; i < 4; ++i) {
-        playeringame[i] = *src++;
+        saved_playeringame[i] = *src++;
     }
     for (i = 4; i < g_maxplayers; ++i) {
-        playeringame[i] = 0;
+        saved_playeringame[i] = 0;
     }
 
     saved_idmus = *src++;
@@ -675,10 +677,17 @@ int x_loadSavepoint(int dest) {
     src = (byte *)G_ReadOptions(src);
     G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
 
-    /* dsda_unarchivecontext ripoff */
+    /* init level state */
     idmusnum = -1;
     G_InitNew(gameskill, gameepisode, gamemap, false);
-	
+
+     /* g_initnew resets playeringame to 0. we must restore
+     * the active player mask before calling p_unarchiveplayers or
+     * we'll get savepoint desync across players */
+    for (i = 0; i < g_maxplayers; ++i) {
+        playeringame[i] = saved_playeringame[i];
+    }
+
     /* neutralize screen wipe */
     wipegamestate = GS_LEVEL;
 
@@ -688,7 +697,7 @@ int x_loadSavepoint(int dest) {
         S_ChangeMusic(idmusnum, 1);
     }
 
-    /* attach buffer with actual size */
+    /* attach buffer w size */
     P_SetSaveBuffer(savepoints[map].save, savepoints[map].size);
     save_p = src;
 
@@ -704,7 +713,7 @@ int x_loadSavepoint(int dest) {
 
     gamestate = GS_LEVEL;
 
-    /* dsda_unarchiveall ripoff */
+    /* dsda_archiveall ripoff */
     P_MapStart();
     P_UnArchiveACS();
     P_UnArchivePlayers();
@@ -718,6 +727,15 @@ int x_loadSavepoint(int dest) {
     P_UnArchiveRNG();
     P_UnArchiveMap();
     P_MapEnd();
+
+    /* clear pending commands and zero out excmd_t to not
+     * get memory corruption */
+    for (i = 0; i < 4; ++i) {
+        memset(&netcmds[i], 0, sizeof(ticcmd_t));
+        if (playeringame[i]) {
+            memset(&players[i].cmd, 0, sizeof(ticcmd_t));
+        }
+    }
 
     R_ActivateSectorInterpolations();
     R_SmoothPlaying_Reset(NULL);

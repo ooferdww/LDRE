@@ -178,6 +178,7 @@ static void DemoEx_GetParams(const wadinfo_t* header) {
         dsda_UpdateStringArg(dsda_arg_emulate, params[p + 1]);
     }
 
+#ifdef XDRE
     p = M_CheckParmEx("-respawn", params, paramscount);
     if (p >= 0) {
       dsda_UpdateFlag(dsda_arg_respawn, true);
@@ -195,6 +196,28 @@ static void DemoEx_GetParams(const wadinfo_t* header) {
       dsda_UpdateFlag(dsda_arg_nomonsters, true);
       nomonsters = clnomonsters = 1;
     }
+#else
+    // for doom 1.2
+    if (!dsda_Flag(dsda_arg_respawn)) {
+      p = M_CheckParmEx("-respawn", params, paramscount);
+      if (p >= 0)
+        dsda_UpdateFlag(dsda_arg_respawn, true);
+    }
+
+    // for doom 1.2
+    if (!dsda_Flag(dsda_arg_fast)) {
+      p = M_CheckParmEx("-fast", params, paramscount);
+      if (p >= 0)
+        dsda_UpdateFlag(dsda_arg_fast, true);
+    }
+
+    // for doom 1.2
+    if (!dsda_Flag(dsda_arg_nomonsters)) {
+      p = M_CheckParmEx("-nomonsters", params, paramscount);
+      if (p >= 0)
+        dsda_UpdateFlag(dsda_arg_nomonsters, true);
+    }
+#endif
 
     p = M_CheckParmEx("-spechit", params, paramscount);
     if (p >= 0 && p < (int) paramscount - 1) {

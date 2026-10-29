@@ -946,6 +946,7 @@ static void R_SetupFrame (player_t *player)
 
   // killough 3/20/98, 4/4/98: select colormap based on player status
 
+#ifdef XDRE
   if (player->mo && player->mo->subsector && player->mo->subsector->sector)
   {
     if (player->mo->subsector->sector->colormap)
@@ -966,6 +967,21 @@ static void R_SetupFrame (player_t *player)
   {
     cm = map_colormap;
   }
+#else
+  if (player->mo->subsector->sector->colormap)
+    cm = player->mo->subsector->sector->colormap;
+  else if (player->mo->subsector->sector->heightsec != -1)
+  {
+    const sector_t *s = player->mo->subsector->sector->heightsec + sectors;
+    cm = viewz < s->floorheight ? s->bottommap :
+         viewz > s->ceilingheight ? s->topmap :
+         s->midmap;
+    if (cm < 0 || cm > numcolormaps)
+      cm = 0;
+  }
+  else
+    cm = map_colormap;
+#endif
 
   //e6y: save previous and current colormap
   boom_cm = cm;
@@ -1069,9 +1085,10 @@ static void R_RenderBSPNodes(void)
 
 void R_RenderPlayerView (player_t* player)
 {
+#ifdef XDRE
   if (!player || !player->mo || !player->mo->subsector)
     return;
-
+#endif
   r_frame_count++;
 
   DSDA_ADD_CONTEXT(sf_setup_frame);

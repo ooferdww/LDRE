@@ -1595,7 +1595,10 @@ void P_CrossHexenSpecialLine(line_t *line, int side, mobj_t *thing, dboolean bos
 //  crossed. Change is qualified by demo_compatibility.
 //
 // CPhipps - take a line_t pointer instead of a line number, as in MBF
+
+#ifdef XDRE
 int xLineCrossed = 0;
+#endif
 
 void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolean bossaction)
 {
@@ -1721,13 +1724,14 @@ void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolea
     }
 
     if (linefunc) // if it was a valid generalized type
-	  
+	{
+#ifdef XDRE
 	  /* active display player only */
 	  if (thing && thing->player && (thing->player - players == displayplayer))
       {
         xLineCrossed = (int)(line - lines);
       }
-	  
+#endif
       switch((line->special & TriggerType) >> TriggerTypeShift)
       {
         case WalkOnce:
@@ -1739,8 +1743,9 @@ void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolea
           return;
         default:                  // if not a walk type, do nothing here
           return;
+        }
       }
-  }
+    }
 
   if (!thing->player || bossaction)
   {
@@ -1780,11 +1785,13 @@ void P_CrossCompatibleSpecialLine(line_t *line, int side, mobj_t *thing, dboolea
   if (!P_CheckTag(line))  //jff 2/27/98 disallow zero tag on some types
     return;
 
+#ifdef XDRE
   /* active display player only */
   if (thing && thing->player && (thing->player - players == displayplayer))
   {
     xLineCrossed = (int)(line - lines);
   }
+#endif
 
   // Dispatch on the line special value to the line's action routine
   // If a once only function, and successful, clear the line special
@@ -2646,6 +2653,7 @@ void P_ShootCompatibleSpecialLine(mobj_t *thing, line_t *line)
     }
 
     if (linefunc)
+	{
       switch((line->special & TriggerType) >> TriggerTypeShift)
       {
         case GunOnce:
@@ -2658,8 +2666,9 @@ void P_ShootCompatibleSpecialLine(mobj_t *thing, line_t *line)
           return;
         default:  // if not a gun type, do nothing here
           return;
+        }
       }
-  }
+    }
 
   // Impacts that other things can activate.
   if (!thing->player)

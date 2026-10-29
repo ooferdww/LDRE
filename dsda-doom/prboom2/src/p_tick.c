@@ -250,23 +250,28 @@ void P_SetTarget(mobj_t **mop, mobj_t *targ)
 
 static void P_RunThinkers (void)
 {
+#ifdef XDRE
   /* return if thinkercap hasn't been initialized */
   if (!thinkercap.next || !thinkercap.prev || thinkercap.next == NULL)
     return;
-
+#endif
   for (currentthinker = thinkercap.next;
+#ifdef XDRE
        currentthinker && currentthinker != &thinkercap;
+#else
+       currentthinker != &thinkercap;
+#endif
        currentthinker = currentthinker->next)
   {
     if (newthinkerpresent)
       R_ActivateThinkerInterpolations(currentthinker);
-
     if (currentthinker->function)
       currentthinker->function(currentthinker);
-
+#ifdef XDRE
     /* currentthinker protection */
     if (!currentthinker)
       break;
+#endif
   }
   newthinkerpresent = false;
 

@@ -627,10 +627,11 @@ void P_PlayerThink (player_t* player)
   weapontype_t newweapon;
   int floorType;
 
+#ifdef XDRE
   /* don't process ticks unless player has spawned */
   if (!player || !player->mo)
     return;
-
+#endif
   if (movement_smooth)
   {
     player->prev_viewz = player->viewz;

@@ -103,6 +103,8 @@ void R_InterpolateView(player_t *player, fixed_t frac)
 {
   static mobj_t *oviewer;
   int quake_intensity;
+
+#ifdef XDRE
   /* interpolate fix, settings don't turn it off right i guess */
   dboolean NoInterpolate;
 
@@ -110,6 +112,9 @@ void R_InterpolateView(player_t *player, fixed_t frac)
     return;
 
   NoInterpolate = dsda_CameraPaused() || dsda_PausedViaMenu();
+#else
+  dboolean NoInterpolate = dsda_CameraPaused() || dsda_PausedViaMenu();
+#endif
 
   quake_intensity = dsda_IntConfig(dsda_config_quake_intensity);
 

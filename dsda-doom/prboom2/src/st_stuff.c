@@ -259,8 +259,10 @@ int ST_SCALED_OFFSETX;
 // main player in game
 static player_t *plyr;
 
-// status bar intermission - xdre
+#ifdef XDRE
+/* status bar intermission stop */
 static dboolean st_stopped = true;
+#endif
 
 // ST_Start() has just been called
 static dboolean st_firsttime;
@@ -690,12 +692,18 @@ static void ST_updateWidgets(void)
   static int  largeammo = 1994; // means "n/a"
   int         i;
 
+#ifdef XDRE
   if (!plyr)
     plyr = &players[displayplayer];
   if (!plyr)
     return;
+#endif
 
   // must redirect the pointer if the ready weapon has changed.
+#ifndef XDRE
+  //  if (w_ready.data != plyr->readyweapon)
+  //  {
+#endif
   if (weaponinfo[plyr->readyweapon].ammo == am_noammo)
     w_ready.num = &largeammo;
   else
@@ -754,13 +762,14 @@ void ST_Ticker(void)
 {
   if (raven) return SB_Ticker();
 
+#ifdef XDRE
   if (!plyr || st_stopped)
     ST_Start();
 
   plyr = &players[displayplayer];
   if (!plyr || !plyr->mo)
     return;
-
+#endif
   st_clock++;
   st_randomnumber = M_Random();
   ST_updateWidgets();
@@ -928,6 +937,7 @@ void ST_Drawer(dboolean refresh)
     return;
   }
 
+#ifdef XDRE
   if (!plyr || st_stopped)
     ST_Start();
 
@@ -937,7 +947,7 @@ void ST_Drawer(dboolean refresh)
     V_EndUIDraw();
     return;
   }
-
+#endif
   /* cph - let status bar on be controlled
    * completely by the call from D_Display
    * proff - really do it
@@ -1226,7 +1236,9 @@ static void ST_createWidgets(void)
                 ST_MAXAMMO3WIDTH);
 }
 
-// static dboolean st_stopped = true;
+#ifndef XDRE
+static dboolean st_stopped = true;
+#endif
 
 void ST_Start(void)
 {

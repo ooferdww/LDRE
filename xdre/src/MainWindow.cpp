@@ -49,6 +49,11 @@
 #include "HeaderDialog.hpp"
 #include "KeysDialog.hpp"
 #include "xdre.hpp"
+
+/* prevent config.h collision */
+#ifdef HAVE_UNISTD_H
+#undef HAVE_UNISTD_H
+#endif
 #include "config.h"
 
 //for wxSscanf()

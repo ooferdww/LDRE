@@ -173,7 +173,9 @@ dboolean         netgame;       // only true if packets are broadcast
 dboolean         playeringame[MAX_MAXPLAYERS];
 player_t        players[MAX_MAXPLAYERS];
 pclass_t        PlayerClass[MAX_MAXPLAYERS];
+#ifdef XDRE
 const ticcmd_t *(*g_xdre_cmd_override)(int player) = NULL;
+#endif
 int             upmove;
 int             consoleplayer; // player taking events and displaying
 int             displayplayer; // view being displayed
@@ -1243,13 +1245,9 @@ static void G_DoLoadLevel (void)
 
 #ifdef XDRE
   G_XDRE_SetDemoOptions(clnomonsters, clrespawnparm, clfastparm);
-#else
-  if (clnomonsters)
-    nomonsters = clnomonsters;
 #endif
 
   P_SetupLevel (gameepisode, gamemap, gameskill);
-  
   if (!demoplayback) // Don't switch views if playing a demo
     displayplayer = consoleplayer;    // view the guy you are playing
   gameaction = ga_nothing;
@@ -1556,7 +1554,9 @@ void G_Ticker (void)
   }
   else {
     int buf = gametic % BACKUPTICS;
+#ifdef XDRE
 	(void)buf;
+#endif
 
     if (!timingdemo) {
 #ifndef XDRE
@@ -1583,6 +1583,7 @@ void G_Ticker (void)
       {
         ticcmd_t *cmd = &players[i].cmd;
 
+#ifdef XDRE
         if (g_xdre_cmd_override)
         {
           const ticcmd_t *override_cmd = g_xdre_cmd_override(i);
@@ -1607,6 +1608,21 @@ void G_Ticker (void)
           if (demorecording)
             G_WriteDemoTiccmd(cmd);
         }
+#else
+        memcpy(cmd, &local_cmds[i][buf], sizeof *cmd);
+
+        if (dsda_BuildMode())
+          dsda_ReadBuildCmd(cmd);
+
+        if (dsda_PendingJoin())
+          dsda_JoinDemoCmd(cmd);
+
+        if (demoplayback)
+          dsda_TryPlaybackOneTick(cmd);
+
+        if (demorecording)
+          G_WriteDemoTiccmd(cmd);
+#endif
       }
     }
 
@@ -2831,12 +2847,18 @@ void G_ReloadDefaults(void)
 
   // jff 1/24/98 reset play mode to command line spec'd version
   // killough 3/1/98: moved to here
+#ifdef XDRE
   if (!g_xdre_cmd_override)
   {
     respawnparm = clrespawnparm;
     fastparm = clfastparm;
     nomonsters = clnomonsters;
   }
+#else
+  respawnparm = clrespawnparm;
+  fastparm = clfastparm;
+  nomonsters = clnomonsters;
+#endif
 
   dsda_ClearPlaybackStream();
 
@@ -2893,6 +2915,7 @@ void G_ReloadDefaults(void)
 #endif
 }
 
+#ifdef XDRE
 void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
 {
     nomonsters = clnomonsters = no_monsters;
@@ -2905,7 +2928,7 @@ void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
     else
         skill_info.flags &= ~SI_FAST_MONSTERS;
 
-    /* update dsda skill_info respawn time (12 seconds default if active) */
+    /* update dsda skill_info respawn time */
     if (respawn)
     {
         if (skill_info.respawn_time <= 0)
@@ -2918,6 +2941,7 @@ void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast)
 
     G_RefreshFastMonsters();
 }
+#endif
 
 void G_DoNewGame (void)
 {
@@ -3749,7 +3773,7 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
     monkeys = 0;
 	
 #ifdef XDRE
-    /* Vanilla demos do not serialize an rng seed; default to index 0 */
+    /* vanilla demos don't serialize rng seed, reset to 0 */
     rngseed = 0;
 #endif
 
@@ -3772,9 +3796,9 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
       nomonsters = *demo_p++;
       consoleplayer = *demo_p++;
 	  
-	#ifdef XDRE
+#ifdef XDRE
       G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
-    #endif
+#endif
     }
     else
     {
@@ -3939,7 +3963,8 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
     }
     else
     {
-      // 4-28 byte player header mismatch, crude ahh fix
+#ifdef XDRE
+      /* 4-28 byte player header mismatch, crude ahh fix */
       if (CheckForOverrun(header_p, demo_p, size, 4, failonerror))
         return NULL;
 
@@ -3947,6 +3972,14 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
         playeringame[i] = *demo_p++;
       for (; i < g_maxplayers; i++)
         playeringame[i] = 0;
+#else
+      //e6y: check for overrun
+      if (CheckForOverrun(header_p, demo_p, size, g_maxplayers, failonerror))
+        return NULL;
+
+      for (i = 0; i < g_maxplayers; i++)
+        playeringame[i] = *demo_p++;
+#endif
     }
   }
   else
@@ -3981,15 +4014,15 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
 
 #ifdef XDRE
   G_XDRE_SetDemoOptions(nomonsters, respawnparm, fastparm);
-#else
-  clnomonsters = nomonsters;
-  clrespawnparm = respawnparm;
-  clfastparm = fastparm;
 #endif
 
   if (!(params & RDH_SKIP_HEADER) && gameaction != ga_loadgame)
   {
+#ifdef XDRE
     G_InitNew(skill, episode, map, false);
+#else
+    G_InitNew(skill, episode, map, true);
+#endif
     demo_p = dsda_EvaluateDemoStartPoint(demo_p);
   }
 

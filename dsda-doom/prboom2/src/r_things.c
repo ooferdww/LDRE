@@ -1314,8 +1314,10 @@ void R_DrawPlayerSprites(void)
   if (walkcamera.type != 0)
     return;
 
+#ifdef XDRE
   if (!viewplayer || !viewplayer->mo || !viewplayer->mo->subsector)
     return;
+#endif
 
   // get light level
   R_SetSpritelights(viewplayer->mo->subsector->sector->lightlevel);

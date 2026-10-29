@@ -398,6 +398,7 @@ void HU_Ticker(void)
 {
   int i;
 
+#ifdef XDRE
   if (gamestate != GS_LEVEL)
     return;
 
@@ -406,6 +407,7 @@ void HU_Ticker(void)
 
   if (!custom_message_p)
     return;
+#endif
 
   dsda_UpdateMessenger();
 

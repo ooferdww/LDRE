@@ -585,7 +585,7 @@ void BruteDialog::OnRemoveButtonClick(wxCommandEvent& event) {
 
     bruteTicsBox->Delete(item);
     items.erase(std::begin(items) + item);
-    int sel = item < items.size() ? item : items.size() - 1;
+    int sel = (item >= 0 && static_cast<size_t>(item) < items.size()) ? item : static_cast<int>(items.size()) - 1;
     bruteTicsBox->SetSelection(sel);
 
     if (sel >= 0) {

@@ -374,7 +374,11 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_exhud] = {
     "dsda_exhud", dsda_config_exhud,
+#ifdef XDRE
+    CONF_BOOL(1), NULL, CONF_FEATURE | NOT_STRICT, dsda_InitExHud
+#else
     CONF_BOOL(0), NULL, CONF_FEATURE | NOT_STRICT, dsda_InitExHud
+#endif
   },
   [dsda_config_free_text] = {
     "dsda_free_text", dsda_config_free_text,
@@ -871,7 +875,11 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_hud_displayed] = {
     "hud_displayed", dsda_config_hud_displayed,
+#ifdef XDRE
+    CONF_BOOL(1), NULL, CONF_FEATURE | NOT_STRICT, R_SetViewSize
+#else
     CONF_BOOL(0), NULL, CONF_FEATURE | NOT_STRICT, R_SetViewSize
+#endif
   },
   [dsda_config_hudadd_secretarea] = {
     "hudadd_secretarea", dsda_config_hudadd_secretarea,
@@ -943,11 +951,19 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_ex_text_scale_x] = {
     "ex_text_scale_x", dsda_config_ex_text_scale_x,
+#ifdef XDRE
+    dsda_config_int, 0, 4000, { 250 }, NULL, NOT_STRICT, dsda_UpdateStretchParams
+#else
     dsda_config_int, 0, 4000, { 0 }, NULL, NOT_STRICT, dsda_UpdateStretchParams
+#endif
   },
   [dsda_config_ex_text_ratio_y] = {
     "ex_text_ratio_y", dsda_config_ex_text_ratio_y,
+#ifdef XDRE
+    dsda_config_int, 0, 200, { 125 }, NULL, NOT_STRICT, dsda_UpdateStretchParams
+#else
     dsda_config_int, 0, 200, { 0 }, NULL, NOT_STRICT, dsda_UpdateStretchParams
+#endif
   },
   [dsda_config_wipe_at_full_speed] = {
     "dsda_wipe_at_full_speed", dsda_config_wipe_at_full_speed,
@@ -1188,7 +1204,11 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_uncapped_framerate] = {
     "uncapped_framerate", dsda_config_uncapped_framerate,
+#ifdef XDRE
+    CONF_BOOL(0), NULL, NOT_STRICT, M_ChangeUncappedFrameRate
+#else
     CONF_BOOL(1), NULL, NOT_STRICT, M_ChangeUncappedFrameRate
+#endif
   },
   [dsda_config_fps_limit] = {
     "dsda_fps_limit", dsda_config_fps_limit,
@@ -1204,7 +1224,11 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_screenblocks] = {
     "screenblocks", dsda_config_screenblocks,
+#ifdef XDRE
+    dsda_config_int, 10, 11, { 11 }, NULL, CONF_FEATURE | NOT_STRICT, R_SetViewSize
+#else
     dsda_config_int, 10, 11, { 10 }, NULL, CONF_FEATURE | NOT_STRICT, R_SetViewSize
+#endif
   },
   [dsda_config_sdl_video_window_pos] = {
     "sdl_video_window_pos", dsda_config_sdl_video_window_pos,
@@ -1228,7 +1252,11 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_render_wipescreen] = {
     "render_wipescreen", dsda_config_render_wipescreen,
+#ifdef XDRE
+    CONF_BOOL(0), NULL, STRICT_INT(1)
+#else
     CONF_BOOL(1), NULL, STRICT_INT(1)
+#endif
   },
   [dsda_config_render_screen_multiply] = {
     "render_screen_multiply", dsda_config_render_screen_multiply,

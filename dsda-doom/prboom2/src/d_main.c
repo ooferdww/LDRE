@@ -493,7 +493,7 @@ void D_Display (fixed_t frac)
 
     if (frac < 0)
       frac = I_GetTimeFrac();
-
+#ifdef XDRE
     if (players[displayplayer].mo && players[displayplayer].mo->subsector)
     {
       R_InterpolateView(&players[displayplayer], frac);
@@ -502,6 +502,13 @@ void D_Display (fixed_t frac)
       R_RenderPlayerView(&players[displayplayer]);
       DSDA_REMOVE_CONTEXT(sf_player_view);
     }
+#else
+    R_InterpolateView(&players[displayplayer], frac);
+
+    DSDA_ADD_CONTEXT(sf_player_view);
+    R_RenderPlayerView(&players[displayplayer]);
+    DSDA_REMOVE_CONTEXT(sf_player_view);
+#endif
 
     dsda_UpdateRenderStats();
 

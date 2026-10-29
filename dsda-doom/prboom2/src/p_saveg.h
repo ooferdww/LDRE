@@ -64,7 +64,9 @@ extern byte* savebuffer;
 
 void CheckSaveGame(size_t size);
 void P_InitSaveBuffer(void);
+#ifdef XDRE
 void P_SetSaveBuffer(byte *buf, int size);
+#endif
 void P_ForgetSaveBuffer(void);
 void P_FreeSaveBuffer(void);
 

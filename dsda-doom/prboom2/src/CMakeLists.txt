@@ -510,7 +510,6 @@ set(GL_SOURCES
     gl_wipe.c
 )
 
-# exclude i_main.c for xdre
 set(DSDA_CORE_SOURCES
     ${COMMON_SRC}
     ${NET_CLIENT_SRC}
@@ -536,63 +535,66 @@ if(WIN32)
     endif()
 endif()
 
-# engine core as object so xdre can link it
+# ===================================================================
+# 1. Vanilla Engine Core (For Standalone dsda-doom)
+# ===================================================================
 add_library(dsda-doom-core OBJECT ${DSDA_CORE_SOURCES})
 
 dsda_target_set_warnings(dsda-doom-core)
 dsda_target_silence_deprecation(dsda-doom-core)
 dsda_target_enable_fast_math(dsda-doom-core)
 
-target_compile_features(dsda-doom-core
-    PRIVATE
-    cxx_std_11
-)
+target_compile_definitions(dsda-doom-core PUBLIC HAVE_CONFIG_H)
 
-target_compile_definitions(dsda-doom-core
-    PUBLIC
-    XDRE=1
-    HAVE_CONFIG_H
-)
+target_compile_features(dsda-doom-core PRIVATE cxx_std_11)
 
-target_include_directories(dsda-doom-core
-    PUBLIC
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dsda-doom-core PRIVATE
+        $<$<COMPILE_LANGUAGE:C,CXX>:
+            -O2
+            -fno-strict-aliasing
+            -fwrapv
+            -fstack-protector-strong
+        >
+    )
+endif()
+
+target_include_directories(dsda-doom-core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/../build-config
 )
+target_link_libraries(dsda-doom-core PUBLIC dsda::dependencies)
 
-# local scope libraries
-target_link_libraries(dsda-doom-core
-    PUBLIC
-    dsda::dependencies
-)
-
-# standalone dsda-doom exe
+# ===================================================================
+# 2. Standalone dsda-doom Executable (Vanilla, No XDRE hooks)
+# ===================================================================
 add_executable(dsda-doom WIN32 SDL/i_main.c)
 
 dsda_target_set_warnings(dsda-doom)
 dsda_target_silence_deprecation(dsda-doom)
 dsda_target_enable_fast_math(dsda-doom)
 
-target_compile_features(dsda-doom
-    PRIVATE
-    cxx_std_11
-)
+target_compile_definitions(dsda-doom PRIVATE HAVE_CONFIG_H)
 
-target_compile_definitions(dsda-doom
-    PRIVATE
-    HAVE_CONFIG_H
-)
+target_compile_features(dsda-doom PRIVATE cxx_std_11)
 
-target_include_directories(dsda-doom
-    PRIVATE
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dsda-doom PRIVATE
+        $<$<COMPILE_LANGUAGE:C,CXX>:
+            -O2
+            -fno-strict-aliasing
+            -fwrapv
+            -fstack-protector-strong
+        >
+    )
+endif()
+
+target_include_directories(dsda-doom PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}/../build-config
 )
 
-target_link_libraries(dsda-doom
-    PRIVATE
-    dsda-doom-core
-)
+target_link_libraries(dsda-doom PRIVATE dsda-doom-core)
 
 set_target_properties(dsda-doom PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${DSDA_OUTPUT_PATH}
@@ -600,8 +602,7 @@ set_target_properties(dsda-doom PROPERTIES
 )
 
 add_dependencies(dsda-doom dsda-doom-wad)
-add_custom_command(TARGET dsda-doom
-    POST_BUILD
+add_custom_command(TARGET dsda-doom POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Copying ${WAD_DATA_PATH} to $<TARGET_FILE_DIR:dsda-doom>"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WAD_DATA_PATH} $<TARGET_FILE_DIR:dsda-doom>
 )
@@ -634,3 +635,36 @@ if(CMAKE_VERSION VERSION_GREATER 3.20
 else()
     install(TARGETS dsda-doom RUNTIME DESTINATION "${DSDA_INSTALL_BINDIR}")
 endif()
+
+# ===================================================================
+# 3. XDRE Engine Core (Compiled with XDRE=1)
+# ===================================================================
+add_library(dsda-doom-core-xdre OBJECT ${DSDA_CORE_SOURCES})
+
+dsda_target_set_warnings(dsda-doom-core-xdre)
+dsda_target_silence_deprecation(dsda-doom-core-xdre)
+dsda_target_enable_fast_math(dsda-doom-core-xdre)
+
+target_compile_definitions(dsda-doom-core-xdre PUBLIC
+    HAVE_CONFIG_H
+    XDRE=1
+)
+
+target_compile_features(dsda-doom-core-xdre PRIVATE cxx_std_11)
+
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dsda-doom-core-xdre PRIVATE
+        $<$<COMPILE_LANGUAGE:C,CXX>:
+            -O2
+            -fno-strict-aliasing
+            -fwrapv
+            -fstack-protector-strong
+        >
+    )
+endif()
+
+target_include_directories(dsda-doom-core-xdre PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/../build-config
+)
+target_link_libraries(dsda-doom-core-xdre PUBLIC dsda::dependencies)

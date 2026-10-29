@@ -68,22 +68,34 @@ byte *save_p;
 byte *savebuffer;
 static int savegamesize;
 
+#ifdef XDRE
+extern void P_FreeSecNodeList(void);
+#endif
+
 // Check for overrun and realloc if necessary -- Lee Killough 1/22/98
 void CheckSaveGame(size_t size)
 {
   size_t offset = save_p - savebuffer;
 
+#ifdef XDRE
   if (savegamesize <= 0)
   {
     savegamesize = (offset + size > SAVEGAMESIZE) ? (int)(offset + size) * 2 : SAVEGAMESIZE;
   }
 
   if (offset + size <= (size_t)savegamesize)
+#else
+  if (offset + size <= savegamesize)
+#endif
   {
     return;
   }
 
+#ifdef XDRE
   while (offset + size > (size_t)savegamesize)
+#else
+  while (offset + size > savegamesize)
+#endif
   {
     savegamesize *= 2;
   }
@@ -98,12 +110,14 @@ void P_InitSaveBuffer(void)
   save_p = savebuffer = Z_Malloc(savegamesize);
 }
 
+#ifdef XDRE
 void P_SetSaveBuffer(byte *buf, int size)
 {
   savebuffer = buf;
   save_p = buf;
   savegamesize = size;
 }
+#endif
 
 void P_ForgetSaveBuffer(void)
 {
@@ -378,22 +392,16 @@ static dboolean P_IsMobjThinker(thinker_t* thinker)
          (thinker->function == P_RemoveThinkerDelayed && thinker->references);
 }
 
-/* static void P_ReplaceMobjWithIndex(mobj_t **mobj)
-{
-  if (*mobj)
-  {
-    *mobj = P_IsMobjThinker(&(*mobj)->thinker) ?
-            (mobj_t *) (*mobj)->thinker.prev   :
-            NULL;
-  }
-} */ // old function
-
 static void P_ReplaceMobjWithIndex(mobj_t **mobj)
 {
   if (*mobj)
   {
     *mobj = P_IsMobjThinker(&(*mobj)->thinker) ?
+#ifdef XDRE
             (mobj_t *)(uintptr_t)(uint32_t)(uintptr_t)(*mobj)->thinker.prev :
+#else
+            (mobj_t *) (*mobj)->thinker.prev   :
+#endif
             NULL;
   }
 }
@@ -432,7 +440,7 @@ static void P_ReplaceIndexWithMobj(mobj_t **mobj, mobj_t **mobj_p, int mobj_coun
   );
 }
 
-/* void P_ThinkerToIndex(void)
+void P_ThinkerToIndex(void)
 {
   thinker_t *th;
 
@@ -443,31 +451,15 @@ static void P_ReplaceIndexWithMobj(mobj_t **mobj, mobj_t **mobj_p, int mobj_coun
   number_of_thinkers = 0;
   for (th = thinkercap.next ; th != &thinkercap ; th=th->next)
     if (P_IsMobjThinker(th))
-      th->prev = (thinker_t *)(intptr_t) ++number_of_thinkers;
-} */ // old function
-
-void P_ThinkerToIndex(void)
-{
-  thinker_t *th;
-
-  number_of_thinkers = 0;
-  for (th = thinkercap.next ; th != &thinkercap ; th=th->next)
-    if (P_IsMobjThinker(th))
+#ifdef XDRE
       th->prev = (thinker_t *)(uintptr_t)(uint32_t) ++number_of_thinkers;
+#else
+      th->prev = (thinker_t *)(intptr_t) ++number_of_thinkers;
+#endif
 }
 
 // phares 9/13/98: Moved this code outside of P_ArchiveThinkers so the
 // thinker indices could be used by the code that saves sector info.
-
-/* void P_IndexToThinker(void)
-{
-  // killough 2/14/98: restore prev pointers
-  thinker_t *th;
-  thinker_t *prev = &thinkercap;
-
-  for (th = thinkercap.next ; th != &thinkercap ; prev=th, th=th->next)
-    th->prev = prev;
-} */ // keep old function
 
 void P_IndexToThinker(void)
 {
@@ -477,28 +469,35 @@ void P_IndexToThinker(void)
 
   for (th = thinkercap.next ; th != &thinkercap ; prev=th, th=th->next)
     th->prev = prev;
-
+#ifdef XDRE
   thinkercap.prev = prev;
+#endif
 }
 
 // killough 2/16/98: save/restore random number generator state information
 
-// savepoint hang fix attempt
+#ifdef XDRE
+// savepoint hang fix
 extern int boom_basetic;
 extern int true_basetic;
+#endif
 
 void P_ArchiveRNG(void)
 {
   P_SAVE_X(rng);
+#ifdef XDRE
   P_SAVE_X(boom_basetic);
   P_SAVE_X(true_basetic);
+#endif
 }
 
 void P_UnArchiveRNG(void)
 {
   P_LOAD_X(rng);
+#ifdef XDRE
   P_LOAD_X(boom_basetic);
   P_LOAD_X(true_basetic);
+#endif
 }
 
 // killough 2/22/98: Save/restore automap state
@@ -526,7 +525,11 @@ void P_UnArchiveMap(void)
 
   P_LOAD_X(markpointnum);
 
+#ifdef XDRE
+  if (markpointnum > 0)
+#else
   if (markpointnum)
+#endif
     {
       int i;
       while (markpointnum >= markpointnum_max)
@@ -541,6 +544,12 @@ void P_UnArchiveMap(void)
         AM_setMarkParams(i);
       }
     }
+#ifdef XDRE
+  else
+    {
+      markpointnum = 0;
+    }
+#endif
 }
 
 void P_ArchiveThinkerSubclass(th_class class)
@@ -1229,6 +1238,10 @@ void P_UnArchiveThinkers(void) {
       Z_Free (th);
     th = next;
   }
+
+#ifdef XDRE
+  P_FreeSecNodeList();
+#endif
   P_InitThinkers ();
 
   // killough 2/14/98: count number of thinkers by skipping through them
@@ -1680,8 +1693,8 @@ void P_UnArchiveThinkers(void) {
           // Wipe blocklist pointers. They will be restored correctly later in P_UnArchiveBlockLinks.
           mobj->bprev = NULL;
           mobj->bnext = NULL;
-		  
-		  if (mobj->player)
+
+          if (mobj->player)
           {
             (mobj->player = &players[(size_t) mobj->player - 1]) -> mo = mobj;
           }

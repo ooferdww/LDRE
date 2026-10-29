@@ -969,11 +969,11 @@ void WI_End(void)
     WI_endStats();
 }
 
-/* fix 35 tic delay in entering screen */
 #ifdef XDRE
+/* fix 35 tic delay in entering screen */
 #define WI_LONGER_NOW_ENTERING 0
 #else
-#define WI_LONGER_NOW_ENTERING (allow_incompatibility && !demo_compatibility && !demoplayback && gamemode == commercial && !netgame)
+#define WI_LONGER_NOW_ENTERING (allow_incompatibility && gamemode == commercial && !netgame)
 #endif
 
 void WI_wait(void)

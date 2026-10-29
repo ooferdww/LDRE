@@ -33,7 +33,7 @@
 extern SDL_Window *sdl_window;
 extern void dsda_UpdateFlag(dsda_arg_identifier_t id, dboolean found);
 
-extern thinker_t thinkercap;
+extern thinker_t thinkerclasscap[];
 extern int dogs;
 
 /* g_game.c shared */
@@ -88,7 +88,7 @@ void I_AtExit(atexit_func_t func, dboolean run_on_error,
     if (!func || priority < 0 || priority >= exit_priority_max)
         return;
 
-    /* Prevent duplicate registrations of the same function at this priority */
+    /* prevent duplicate registration */
     for (entry = exit_funcs[priority]; entry; entry = entry->next) {
         if (entry->func == func)
             return;
@@ -100,6 +100,14 @@ void I_AtExit(atexit_func_t func, dboolean run_on_error,
     entry->next = exit_funcs[priority];
     entry->name = name;
     exit_funcs[priority] = entry;
+}
+
+static void XDRE_FreeWarpArg(void) {
+    dsda_arg_t *warp_arg = dsda_Arg(dsda_arg_warp);
+    if (warp_arg && warp_arg->value.v_int_array) {
+        Z_Free(warp_arg->value.v_int_array);
+        warp_arg->value.v_int_array = NULL;
+    }
 }
 
 void I_SafeExit(int rc) {
@@ -126,7 +134,7 @@ void mainDoom(int argc, char** argv) {
     nosfxparm = true;
     nomusicparm = true;
 
-    /* If neither -warp nor demo was specified on the CLI, configure warp to map 1 natively */
+    /* configure warp option */
     if (!dsda_Flag(dsda_arg_warp) && !dsda_Flag(dsda_arg_playdemo) && !dsda_Flag(dsda_arg_timedemo)) {
         dsda_arg_t *warp_arg = dsda_Arg(dsda_arg_warp);
         warp_arg->found = true;
@@ -145,7 +153,7 @@ void mainDoom(int argc, char** argv) {
     setlocale(LC_TIME, "");
     I_PreInitGraphics();
 
-    /* D_DoomMain will now autostart MAP01 / E1M1 directly inside G_InitNew */
+    /* autostart specified map */
     D_DoomMain();
 
     /* g_ticker netcmd hook */
@@ -155,7 +163,7 @@ void mainDoom(int argc, char** argv) {
         P_InitThinkers();
     }
 
-    /* Single-player console/display defaults */
+    /* console/display defaults */
     playeringame[0] = true;
     for (int i = 1; i < g_maxplayers; i++) {
         playeringame[i] = false;
@@ -173,8 +181,10 @@ void mainDoom(int argc, char** argv) {
         extern void x_shutdown(void);
         atexit(x_shutdown);
         atexit(x_clearAllSavepoints);
+        atexit(XDRE_FreeWarpArg);
         I_AtExit(x_clearAllSavepoints, true, "x_clearAllSavepoints", exit_priority_normal);
         I_AtExit(x_shutdown, true, "x_shutdown", exit_priority_normal);
+        I_AtExit(XDRE_FreeWarpArg, true, "XDRE_FreeWarpArg", exit_priority_normal);
     }
 
     /* keyframe reset */

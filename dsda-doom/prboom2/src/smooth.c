@@ -53,7 +53,11 @@ void R_SmoothPlaying_Reset(player_t *player)
     if (!player)
       player = &players[displayplayer];
 
+#ifdef XDRE
     if (player && player == &players[displayplayer])
+#else
+    if (player==&players[displayplayer])
+#endif
     {
       if (player->mo)
       {
@@ -80,9 +84,10 @@ void R_SmoothPlaying_Add(int delta)
 
 angle_t R_SmoothPlaying_Get(player_t *player)
 {
+#ifdef XDRE
   if (!player || !player->mo)
     return 0;
-
+#endif
   if (demo_smoothturns && demoplayback && !demorecording && player == &players[displayplayer])
     return smooth_playing_angle;
   else

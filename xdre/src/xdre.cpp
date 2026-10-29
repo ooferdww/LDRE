@@ -19,6 +19,8 @@ extern "C" {
     #include "d_ticcmd.h"
     #include "cstuff.h"
 	#include "dsda/configuration.h"
+	#include "hu_stuff.h"
+    #include "st_stuff.h"
 
     void mainDoom(int argc, char** argv);
     void D_Display(void);
@@ -64,6 +66,7 @@ extern "C" {
 	
 	void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast);
 	int dsda_GameOptionSize(void);
+	extern dboolean BorderNeedRefresh;
 } /* extern "C" */
 
 /*
@@ -93,6 +96,41 @@ void makeCmds();
 void goForward(int numTics);
 void goBack(int numTics);
 
+static void invalidateSavepointsAfter(int tic) {
+    /* if savepoint is ahead of current section, clear it */
+    if (x_getSavepointTic(tic) >= tic) {
+        x_clearUserSavepoint();
+    }
+}
+
+/* tic padding for multiplayer */
+static void syncActivePlayerTics() {
+    std::size_t maxTics = 0;
+    for (int p = 0; p < 4; ++p) {
+        if (playeringameGet(p)) {
+            maxTics = std::max(maxTics, tics[p].size());
+        }
+    }
+
+    for (int p = 0; p < 4; ++p) {
+        if (!playeringameGet(p)) {
+            continue;
+        }
+
+        auto currentOffset = std::distance(std::begin(tics[p]), nextTic[p]);
+
+        if (tics[p].size() < maxTics) {
+            tics[p].resize(maxTics, ticcmd_t{});
+        }
+
+        if (currentOffset <= static_cast<std::ptrdiff_t>(tics[p].size())) {
+            nextTic[p] = std::begin(tics[p]) + currentOffset;
+        } else {
+            nextTic[p] = std::end(tics[p]);
+        }
+    }
+}
+
 static ticcmd_t* getActiveTic() {
     auto& playerTics = tics[displayplayer];
     if (playerTics.empty() || nextTic[displayplayer] == playerTics.begin()) {
@@ -104,6 +142,10 @@ static ticcmd_t* getActiveTic() {
 void display() {
     if (gamestate == GS_LEVEL) {
         if (players[displayplayer].mo != NULL) {
+            /* recalc hud displays for current player */
+            ST_Ticker();
+            HU_Ticker();
+            BorderNeedRefresh = true;
             D_Display();
         }
     } else if (gamestate == GS_INTERMISSION || gamestate == GS_FINALE) {
@@ -144,9 +186,10 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     x_clearUserSavepoint();
     for (int p = 0; p < 4; ++p) {
         tics[p].clear();
+		tics[p].shrink_to_fit();
     }
 
-    unsigned char const* demomarker_p = readTics(tics_p, size - (tics_p - demo_p));
+    readTics(tics_p, size - (tics_p - demo_p));
 
     /* reset engine from goback */
     rewindDemoToStart();
@@ -306,27 +349,59 @@ void goBack(int numTics) {
         return;
     }
 
-    auto oldTic = gametic;
+    int const savedDisplayPlayer = displayplayer;
+
     auto destTic = gametic - numTics;
+    /* block time: 0.00 leak */
     if (destTic < 1) {
         destTic = 1;
     }
 
+    /* enforce savepoint boundary */
     if (savepointStyle == SpStyle::SP_USER) {
         auto temp = x_getSavepointTic(gametic);
-        destTic = destTic <= temp ? temp + 1 : destTic;
+        if (temp > 0) {
+            destTic = destTic <= temp ? temp + 1 : destTic;
+        }
+    }
+
+    /* clear netcmds */
+    for (int p = 0; p < 4; ++p) {
+        netcmds[p] = {};
     }
 
     if (!x_loadSavepoint(destTic)) {
         for (int p = 0; p < 4; ++p) {
-            safeAdvanceTic(p, gametic - oldTic);
+            if (!playeringameGet(p) || tics[p].empty()) continue;
+            std::size_t targetIdx = std::min<std::size_t>(gametic, tics[p].size());
+            nextTic[p] = tics[p].begin() + targetIdx;
         }
-        goForward(destTic - gametic);
+
+        if (destTic > gametic) {
+            goForward(destTic - gametic);
+        }
     } else {
-      x_clearMapSavepoints();
-      x_clearUserSavepoint();
-      rewindDemoToStart();
-      goForward(destTic);
+        x_clearMapSavepoints();
+        x_clearUserSavepoint();
+        rewindDemoToStart();
+
+        /* start to desttic */
+        if (destTic > 0) {
+            goForward(destTic);
+        }
+    }
+
+    /* clear netcmd again */
+    for (int p = 0; p < 4; ++p) {
+        netcmds[p] = {};
+    }
+
+    if (savedDisplayPlayer >= 0 && savedDisplayPlayer < 4 && playeringameGet(savedDisplayPlayer)) {
+        displayplayer = savedDisplayPlayer;
+        if (gamestate == GS_LEVEL) {
+            ST_Start();
+            HU_Start();
+        }
     }
 }
 
@@ -545,7 +620,7 @@ bool xdre::bruteForce(std::vector<BruteTic> bruteTics,
     std::sort(std::begin(bruteTics), std::end(bruteTics), [](BruteTic const& lhs, BruteTic const& rhs){return lhs.tic < rhs.tic;});
     int bruteStart = bruteTics.front().tic;
     int bruteEnd = bruteTics.back().tic;
-    if (bruteStart < 0 || tics[displayplayer].size() - 1 < bruteEnd || bruteCheck.tic < bruteStart) {
+    if (bruteStart < 0 || tics[displayplayer].empty() || static_cast<long long>(tics[displayplayer].size() - 1) < bruteEnd || static_cast<int>(bruteCheck.tic) < bruteStart) {
         return false;
     }
 
@@ -600,41 +675,39 @@ void xdre::doSdlEvents() {
 }
 
 bool xdre::save(std::FILE* file) {
+    if (!file) return false;
     rewind(file);
+
+    /* call tic sync */
+    syncActivePlayerTics();
 
     if (!header.empty()) {
         fwrite(header.data(), sizeof(header[0]), header.size(), file);
     }
 
-    decltype(std::begin(tics[0])) iters[4] {
-        std::begin(tics[0]),
-        std::begin(tics[1]),
-        std::begin(tics[2]),
-        std::begin(tics[3]),
-    };
-
-    decltype(std::end(tics[0])) ends[4] {
-        std::end(tics[0]),
-        std::end(tics[1]),
-        std::end(tics[2]),
-        std::end(tics[3]),
-    };
-
-    ticcmd_t nulltic {};
-    while (iters[0] != ends[0] ||
-           iters[1] != ends[1] ||
-           iters[2] != ends[2] ||
-           iters[3] != ends[3]) {
-        for (int p = 0; p < 4; ++p) {
-            if (iters[p] != ends[p]) {
-                XDRE_WriteDemoTiccmd(&*iters[p], file);
-                ++iters[p];
-            } else if(playeringameGet(p))
-                XDRE_WriteDemoTiccmd(&nulltic, file);
+    std::size_t totalTics = 0;
+    for (int p = 0; p < 4; ++p) {
+        if (playeringameGet(p)) {
+            totalTics = std::max(totalTics, tics[p].size());
         }
     }
 
-    fputc(0x80, file);
+    ticcmd_t nulltic {};
+
+    /* write tics in round-robin order */
+    for (std::size_t t = 0; t < totalTics; ++t) {
+        for (int p = 0; p < 4; ++p) {
+            if (playeringameGet(p)) {
+                if (t < tics[p].size()) {
+                    XDRE_WriteDemoTiccmd(&tics[p][t], file);
+                } else {
+                    XDRE_WriteDemoTiccmd(&nulltic, file);
+                }
+            }
+        }
+    }
+
+    fputc(0x80, file); /* DEMOMARKER */
 
     XDRE_WriteDemoFooter(file);
 
@@ -687,57 +760,216 @@ void xdre::seekDemo(int numTics) {
 }
 
 void xdre::copyTic() {
-    if (nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+    if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
         return;
     }
-    auto tic = std::prev(nextTic[displayplayer]);
 
-    // emplace returns the iterator pointing to the newly inserted element
-    nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], *tic);
+    /* snapshot the index of insertion */
+    auto const insertIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]));
+    
+    /* local copy */
+    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
+
+    /* clean WT and wait for others */
+    ticcmd_t cleanWaitTic;
+    std::memset(&cleanWaitTic, 0, sizeof(cleanWaitTic));
+
+    /* insert into every active player at same index */
+    for (int p = 0; p < 4; ++p) {
+        if (!playeringameGet(p)) continue;
+
+        auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+        auto safeInsertIdx = std::min(insertIdx, tics[p].size());
+
+        if (p == displayplayer) {
+            nextTic[p] = tics[p].emplace(tics[p].begin() + safeInsertIdx, cmdToCopy);
+        } else {
+            tics[p].emplace(tics[p].begin() + safeInsertIdx, cleanWaitTic);
+            if (otherOffset >= safeInsertIdx) {
+                ++otherOffset;
+            }
+            nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+        }
+    }
+
+    syncActivePlayerTics();
     goForward(1);
     display();
 }
 
 void xdre::copyTicX(int val) {
-    if (nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+    if (val < 1 || tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
         return;
     }
-    auto tic = std::prev(nextTic[displayplayer]);
-    ticcmd_t cmd = *tic; // Make a local copy so reallocations don't invalidate *tic
 
-    for (int i = 0; i < val; i++) {
-        nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], cmd);
-        goForward(1);
+    // Copy the single source command
+    ticcmd_t const cmdToCopy = *std::prev(nextTic[displayplayer]);
+
+    ticcmd_t cleanWaitTic;
+    std::memset(&cleanWaitTic, 0, sizeof(cleanWaitTic));
+
+    for (int i = 0; i < val; ++i) {
+        auto const insertIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]));
+
+        for (int p = 0; p < 4; ++p) {
+            if (!playeringameGet(p)) continue;
+
+            auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+            auto safeInsertIdx = std::min(insertIdx, tics[p].size());
+
+            if (p == displayplayer) {
+                nextTic[p] = tics[p].emplace(tics[p].begin() + safeInsertIdx, cmdToCopy);
+            } else {
+                tics[p].emplace(tics[p].begin() + safeInsertIdx, cleanWaitTic);
+                if (otherOffset >= safeInsertIdx) {
+                    ++otherOffset;
+                }
+                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+            }
+        }
     }
+
+    syncActivePlayerTics();
+    goForward(val);
     display();
 }
 
+static inline bool isWaitTic(ticcmd_t const& cmd) {
+    return cmd.forwardmove == 0 &&
+           cmd.sidemove == 0 &&
+           cmd.angleturn == 0 &&
+           cmd.buttons == 0;
+}
+
 void xdre::deleteTic() {
-    if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+    if (tics[displayplayer].size() <= 1) {
         return;
     }
 
-    auto tic = std::prev(nextTic[displayplayer]);
-    // erase() returns the iterator following the removed element
-    nextTic[displayplayer] = tics[displayplayer].erase(tic);
-    goBack(0);
+    bool const atEnd = (nextTic[displayplayer] == std::end(tics[displayplayer]));
+    auto ticToErase = atEnd ? std::prev(nextTic[displayplayer]) : nextTic[displayplayer];
+    auto const curIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), ticToErase));
+
+    /* prevent time: 0.00 leak */
+    if (curIdx < 1) {
+        return;
+    }
+
+    if (atEnd) {
+        tics[displayplayer].erase(ticToErase);
+        nextTic[displayplayer] = std::end(tics[displayplayer]);
+    } else {
+        nextTic[displayplayer] = tics[displayplayer].erase(ticToErase);
+    }
+
+    /* critical: only erase tics from others if it's WT */
+    for (int p = 0; p < 4; ++p) {
+        if (p == displayplayer || !playeringameGet(p)) continue;
+
+        if (curIdx < tics[p].size()) {
+            if (isWaitTic(tics[p][curIdx])) {
+                auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+                tics[p].erase(tics[p].begin() + curIdx);
+                if (otherOffset > curIdx && otherOffset > 0) {
+                    --otherOffset;
+                }
+                nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+            }
+        }
+    }
+
+    invalidateSavepointsAfter(static_cast<int>(curIdx));
+
+    if (atEnd) {
+        goBack(1);
+    } else {
+        goBack(0);
+    }
+
     display();
 }
 
 void xdre::deleteTicX(int val) {
-    for (int i = 0; i < val; i++) {
-        if (tics[displayplayer].empty() || nextTic[displayplayer] == std::begin(tics[displayplayer])) {
+    if (val < 1 || tics[displayplayer].size() <= 1) {
+        return;
+    }
+
+    std::size_t deletedCount = 0;
+    bool wasAtEnd = false;
+    std::size_t lastIdx = 0;
+
+    for (int i = 0; i < val; ++i) {
+        if (tics[displayplayer].size() <= 1) {
             break;
         }
-        auto tic = std::prev(nextTic[displayplayer]);
-        nextTic[displayplayer] = tics[displayplayer].erase(tic);
-        goBack(1);
+
+        bool const atEnd = (nextTic[displayplayer] == std::end(tics[displayplayer]));
+        wasAtEnd = atEnd;
+
+        auto ticToErase = atEnd ? std::prev(nextTic[displayplayer]) : nextTic[displayplayer];
+        auto const curIdx = static_cast<std::size_t>(std::distance(std::begin(tics[displayplayer]), ticToErase));
+
+        if (curIdx < 1) {
+            break;
+        }
+
+        lastIdx = curIdx;
+
+        if (atEnd) {
+            tics[displayplayer].erase(ticToErase);
+            nextTic[displayplayer] = std::end(tics[displayplayer]);
+        } else {
+            nextTic[displayplayer] = tics[displayplayer].erase(ticToErase);
+        }
+
+        /* critical: only erase tics from others if it's WT */
+        for (int p = 0; p < 4; ++p) {
+            if (p == displayplayer || !playeringameGet(p)) continue;
+
+            if (curIdx < tics[p].size()) {
+                if (isWaitTic(tics[p][curIdx])) {
+                    auto otherOffset = static_cast<std::size_t>(std::distance(std::begin(tics[p]), nextTic[p]));
+                    tics[p].erase(tics[p].begin() + curIdx);
+                    if (otherOffset > curIdx && otherOffset > 0) {
+                        --otherOffset;
+                    }
+                    nextTic[p] = tics[p].begin() + std::min(otherOffset, tics[p].size());
+                }
+            }
+        }
+        ++deletedCount;
     }
+
+    if (deletedCount == 0) return;
+
+    invalidateSavepointsAfter(static_cast<int>(lastIdx));
+
+    if (wasAtEnd) {
+        goBack(static_cast<int>(deletedCount));
+    } else {
+        goBack(0);
+    }
+
     display();
 }
 
 void xdre::newTic() {
+    auto const curIdx = std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]);
+
     nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});
+
+    /* insert WT for all players */
+    for (int p = 0; p < 4; ++p) {
+        if (p == displayplayer || !playeringameGet(p)) continue;
+        auto otherOffset = std::distance(std::begin(tics[p]), nextTic[p]);
+        auto insertPos = tics[p].begin() + std::min<std::size_t>(curIdx, tics[p].size());
+        tics[p].emplace(insertPos, ticcmd_t{});
+
+        if (otherOffset >= curIdx) ++otherOffset;
+        nextTic[p] = tics[p].begin() + std::min<std::size_t>(otherOffset, tics[p].size());
+    }
+
+    syncActivePlayerTics();
     goForward(1);
     display();
 }
@@ -747,12 +979,23 @@ void xdre::changePlayerView(unsigned int plr) {
         return;
     } else if (!playeringameGet(plr - 1)) {
         return;
-    } else if (displayplayer == plr - 1) {
+    } else if (displayplayer == static_cast<int>(plr - 1)) {
         return;
     } else if (gamestate != GS_LEVEL) {
         return;
     }
+
+    /* sync tics */
+    syncActivePlayerTics();
+
     displayplayer = plr - 1;
+
+    /* anchor new playerview iterator to current frame */
+    std::size_t targetIndex = (gametic > 0) ? static_cast<std::size_t>(gametic) : 0;
+    if (targetIndex > tics[displayplayer].size()) {
+        targetIndex = tics[displayplayer].size();
+    }
+    nextTic[displayplayer] = tics[displayplayer].begin() + targetIndex;
 
     if (gamestate == GS_LEVEL) {
         ST_Start();
