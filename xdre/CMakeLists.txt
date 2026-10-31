@@ -28,7 +28,7 @@ add_executable(xdre
 # defs
 target_compile_definitions(xdre PRIVATE
     XDRE=1
-    PACKAGE_STRING="LDRE beta v0.1"
+    PACKAGE_STRING="LDRE beta v0.2.0"
     HAVE_CONFIG_H
     _FORTIFY_SOURCE=3
     $<$<COMPILE_LANGUAGE:CXX>:_GLIBCXX_ASSERTIONS>

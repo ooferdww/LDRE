@@ -1184,7 +1184,7 @@ dsda_config_t dsda_config[dsda_config_count] = {
   },
   [dsda_config_screen_resolution] = {
     "screen_resolution", dsda_config_screen_resolution,
-    CONF_STRING("640x480"), NULL, NOT_STRICT, M_ChangeVideoMode
+    CONF_STRING("800x600"), NULL, NOT_STRICT, M_ChangeVideoMode
   },
   [dsda_config_custom_resolution] = {
     "custom_resolution", dsda_config_custom_resolution,

@@ -175,6 +175,8 @@ player_t        players[MAX_MAXPLAYERS];
 pclass_t        PlayerClass[MAX_MAXPLAYERS];
 #ifdef XDRE
 const ticcmd_t *(*g_xdre_cmd_override)(int player) = NULL;
+extern int usedHeader;
+extern int x_longtics;
 #endif
 int             upmove;
 int             consoleplayer; // player taking events and displaying
@@ -1260,8 +1262,15 @@ static void G_DoLoadLevel (void)
   dsda_ResetPauseMode();
   dsda_ResetExCmdQueue();
 
-  if (dsda_BuildMode() || dsda_StartInBuildMode())
+  if (dsda_BuildMode() || dsda_StartInBuildMode()) {
     dsda_EnterBuildMode();
+  }
+  
+#ifdef XDRE
+  if (usedHeader) {
+    longtics = x_longtics;
+  }
+#endif
 
   // killough 5/13/98: in case netdemo has consoleplayer other than green
   ST_Start();
@@ -3184,6 +3193,12 @@ void G_InitNew(int skill, int episode, int map, dboolean prepare)
   dsda_InitSky();
 
   G_DoLoadLevel ();
+  
+#ifdef XDRE
+  if (usedHeader) {
+    longtics = x_longtics;
+  }
+#endif
 }
 
 //
@@ -3483,7 +3498,11 @@ void G_BeginRecording (void)
              break;
         case mbf21_compatibility:
              v = 221;
+#ifdef XDRE
+             longtics = x_longtics;
+#else
              longtics = 1;
+#endif
              shorttics = !dsda_Flag(dsda_arg_longtics);
              break;
         default: I_Error("G_BeginRecording: PrBoom compatibility level unrecognised?");
@@ -3702,7 +3721,17 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
   dsda_DisableExCmd();
 
   demover = *demo_p++;
+
+#ifdef XDRE
+  if (usedHeader) {
+    longtics = x_longtics;
+  } else {
+    longtics = (demover >= 111 && demover < 200) || (demover == 214);
+    x_longtics = longtics;
+  }
+#else
   longtics = 0;
+#endif
 
   // defunct extended header or unknown (e.g., eternity)
   if (demover == 255)
@@ -3910,12 +3939,16 @@ const byte* G_ReadDemoHeaderEx(const byte *demo_p, size_t size, unsigned int par
         break;
       case 214:
         compatibility_level = prboom_6_compatibility;
-              longtics = 1;
+#ifndef XDRE
+        longtics = 1;
+#endif
         demo_p++;
         break;
       case 221:
         compatibility_level = mbf21_compatibility;
+#ifndef XDRE
         longtics = 1;
+#endif
         break;
     }
     //e6y: check for overrun

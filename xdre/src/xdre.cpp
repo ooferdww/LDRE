@@ -67,6 +67,8 @@ extern "C" {
 	void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast);
 	int dsda_GameOptionSize(void);
 	extern dboolean BorderNeedRefresh;
+	extern int usedHeader;
+    extern int x_longtics;
 } /* extern "C" */
 
 /*
@@ -95,6 +97,7 @@ unsigned char const* readTics(unsigned char const* start_p, std::size_t size);
 void makeCmds();
 void goForward(int numTics);
 void goBack(int numTics);
+int getHeaderSize(void);
 
 static void invalidateSavepointsAfter(int tic) {
     /* if savepoint is ahead of current section, clear it */
@@ -159,6 +162,9 @@ static void rewindDemoToStart() {
     if (!header.empty()) {
         XDRE_ReadDemoHeader(header.data(), header.size());
     }
+    if (usedHeader) {
+        longtics = x_longtics;
+    }
     playeringame[0] = true;
 
     for (int p = 0; p < 4; ++p) {
@@ -171,6 +177,8 @@ static void rewindDemoToStart() {
 }
 
 bool loadReplay(unsigned char const* demo_p, std::size_t size) {
+    usedHeader = 0;
+
     unsigned char const* tics_p = XDRE_ReadDemoHeader(demo_p, size);
     if (!tics_p) {
         return false;
@@ -179,16 +187,42 @@ bool loadReplay(unsigned char const* demo_p, std::size_t size) {
     std::size_t const newHeaderSize = static_cast<std::size_t>(tics_p - demo_p);
     header.assign(demo_p, demo_p + newHeaderSize);
 
+    /* determine 4 or 5 byte stride */
+    if (compatibility_level == mbf21_compatibility) {
+        longtics = 1;
+        x_longtics = 1;
+    } else if (header[0] >= 111 && header[0] < 200) {
+        longtics = 1;
+        x_longtics = 1;
+    } else if (header[0] == 214) {
+        longtics = 1;
+        x_longtics = 1;
+    } else {
+        longtics = 0;
+        x_longtics = 0;
+    }
+
     x_clearMapSavepoints();
     x_clearUserSavepoint();
     for (int p = 0; p < 4; ++p) {
         tics[p].clear();
         tics[p].shrink_to_fit();
     }
-
+    
     readTics(tics_p, size - (tics_p - demo_p));
 
-    /* reset engine from goback */
+    /* force shorttics on mbf21 load */
+    if (compatibility_level == mbf21_compatibility) {
+        x_longtics = 0;
+        longtics = 0;
+        usedHeader = 1;
+
+        /* regen header */
+        header.resize(getHeaderSize());
+        x_initHeader(header.data());
+    } else {
+        usedHeader = 1;
+    }
     rewindDemoToStart();
 
     displayplayer = consoleplayer;
@@ -368,6 +402,10 @@ void goBack(int numTics) {
     }
 
     if (!x_loadSavepoint(destTic)) {
+        if (usedHeader) {
+            longtics = x_longtics;
+        }
+
         for (int p = 0; p < 4; ++p) {
             if (!playeringameGet(p) || tics[p].empty()) continue;
             std::size_t targetIdx = std::min<std::size_t>(gametic, tics[p].size());
@@ -568,7 +606,17 @@ void xdre::init(int argc, char** argv) {
         return;
     }
 
+    /* enforce shorttics */
+    x_longtics = 0;
+    longtics = 0;
+    usedHeader = 1;
+
     mainDoom(argc, argv);
+
+    /* enforce again */
+    x_longtics = 0;
+    longtics = 0;
+    usedHeader = 1;
 
     if (gameskill <= 0 || gameskill > 4) {
         gameskill = 3;
@@ -585,6 +633,11 @@ void xdre::init(int argc, char** argv) {
         tics[p].clear();
         nextTic[p] = std::end(tics[p]);
     }
+
+    /* cl21 longtics patch */
+    x_longtics = 0;
+    longtics = 0;
+    usedHeader = true;
 
     header.resize(getHeaderSize());
     x_initHeader(header.data());
@@ -1007,7 +1060,7 @@ void xdre::getOptions(int options[]) {
 }
 
 void xdre::changeOptions(int options[]) {
-    x_changeOptions(options);
+    x_changeOptions(options); /* longtics bs */
     header.resize(getHeaderSize());
     x_initHeader(header.data());
 

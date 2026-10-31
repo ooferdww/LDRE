@@ -84,24 +84,36 @@ void CheckSaveGame(size_t size)
   }
 
   if (offset + size <= (size_t)savegamesize)
-#else
-  if (offset + size <= savegamesize)
-#endif
   {
     return;
   }
 
-#ifdef XDRE
   while (offset + size > (size_t)savegamesize)
+  {
+    savegamesize *= 2;
+  }
+
+  /* realloc cuz cstuffc is malloc */
+  savebuffer = (byte *)realloc(savebuffer, savegamesize);
+  if (!savebuffer)
+  {
+    I_Error("CheckSaveGame: Failed to reallocate savebuffer to %d bytes", savegamesize);
+  }
+  save_p = savebuffer + offset;
 #else
+  if (offset + size <= savegamesize)
+  {
+    return;
+  }
+
   while (offset + size > savegamesize)
-#endif
   {
     savegamesize *= 2;
   }
 
   savebuffer = Z_Realloc(savebuffer, savegamesize);
   save_p = savebuffer + offset;
+#endif
 }
 
 void P_InitSaveBuffer(void)

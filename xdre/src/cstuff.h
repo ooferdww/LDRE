@@ -42,6 +42,7 @@ int x_getSavepointTic(int dest);
 int x_setSavepoint(int isUserSave);
 int x_loadSavepoint(int dest);
 void x_shutdown(void);
+void x_initLongticsDefault(void);
 
 #ifdef __cplusplus
 }

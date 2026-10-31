@@ -33,7 +33,7 @@
 #define MAXPLAYERS 4
 #endif
 
-#define XDRE_SAVEGAMESIZE (16 * 1024 * 1024)
+#define XDRE_SAVEGAMESIZE (256 * 1024 * 1024)
 
 // extern void dsda_SetCompatibilityLevel(int complevel);
 extern void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast);
@@ -71,14 +71,15 @@ typedef struct {
     int tic;
     byte* save;
     size_t size;
+    size_t capacity;
 } xSavepoint_t;
 
 #define MAXSSP 100
 
 static xSavepoint_t savepoints[MAXSSP];
 
-dboolean x_longtics = 0;
-dboolean usedHeader = false;
+int x_longtics = 0;
+int usedHeader = 1;
 
 static int local_compatflags = 0;
 
@@ -308,7 +309,7 @@ void x_getOptions(int options[]) {
     options[24] = dog_jumping;
     options[25] = monkeys;
     options[26] = x_GetCompatibility();
-    options[27] = longtics;
+    options[27] = x_longtics;
 }
 
 void x_changeOptions(int options[]) {
@@ -399,6 +400,9 @@ void x_initHeader(unsigned char* demo_p) {
     /* failed dog fix */
     dogs = 0;
 
+    /* force shorttics unless specified otherwise in header editor */
+        longtics = x_longtics;
+
     if (mbf_features) {
         unsigned char v = 0;
         switch(compatibility_level) {
@@ -407,9 +411,9 @@ void x_initHeader(unsigned char* demo_p) {
             case prboom_3_compatibility: v = 211; break;
             case prboom_4_compatibility: v = 212; break;
             case prboom_5_compatibility: v = 213; break;
-            case prboom_6_compatibility: v = 214; longtics = 1; break;
-            case mbf21_compatibility:    v = 221; longtics = 1; break;
-            default:                     v = 221; longtics = 1; break;
+            case prboom_6_compatibility: v = 214; break;
+            case mbf21_compatibility:    v = 221; break;
+            default:                     v = 221; break;
         }
         *demo_p++ = v;
         *demo_p++ = 0x1d;
@@ -470,11 +474,6 @@ void x_initHeader(unsigned char* demo_p) {
         }
     } else {
         unsigned char v = 109;
-        if (!usedHeader) {
-            longtics = dsda_Flag(dsda_arg_longtics);
-        } else {
-            longtics = x_longtics;
-        }
 
         if (longtics) {
             v = 111;
@@ -510,6 +509,7 @@ void x_clearMapSavepoints(void) {
         }
         savepoints[i].tic = 0;
         savepoints[i].size = 0;
+        savepoints[i].capacity = 0;
     }
 }
 
@@ -520,6 +520,7 @@ void x_clearUserSavepoint(void) {
     }
     savepoints[0].tic = 0;
     savepoints[0].size = 0;
+    savepoints[0].capacity = 0;
 }
 
 void x_clearAllSavepoints(void) {
@@ -573,6 +574,7 @@ int x_setSavepoint(int isUserSave) {
     else if (map >= MAXSSP)
         map = MAXSSP - 1;
 
+    /* user and auto at slot 0 */
     if (leveltime != 1 || isUserSave != 0)
         map = 0;
 
@@ -580,13 +582,13 @@ int x_setSavepoint(int isUserSave) {
         savepoints[map].save = (byte*)malloc(XDRE_SAVEGAMESIZE);
         if (!savepoints[map].save)
             return 1;
-        savepoints[map].size = XDRE_SAVEGAMESIZE;
+        savepoints[map].capacity = XDRE_SAVEGAMESIZE;
     }
 
     savepoints[map].tic = gametic;
 
-    /* init save buffer */
-    P_SetSaveBuffer(savepoints[map].save, savepoints[map].size);
+    /* pass full buffer to avoid overloading CheckSaveGame */
+    P_SetSaveBuffer(savepoints[map].save, (int)savepoints[map].capacity);
 
     *save_p++ = (byte)compatibility_level;
     *save_p++ = (byte)gameskill;
@@ -627,9 +629,13 @@ int x_setSavepoint(int isUserSave) {
 
     *save_p++ = 0xe6;
 
-    /* savebuffer could have been reallocated if it exceeded initial size */
+    /* update pointer if realloc was called */
     savepoints[map].save = savebuffer;
     savepoints[map].size = (size_t)(save_p - savebuffer);
+    if (savepoints[map].size > savepoints[map].capacity) {
+        savepoints[map].capacity = savepoints[map].size;
+    }
+
     save_p = savebuffer = NULL;
     return 0;
 }
@@ -647,9 +653,6 @@ int x_loadSavepoint(int dest) {
         save_p = savebuffer = NULL;
         return 1;
     }
-
-    if (map != 0)
-        x_clearUserSavepoint();
 
     /* read params from savebuffer header */
     src = savepoints[map].save;
@@ -680,6 +683,11 @@ int x_loadSavepoint(int dest) {
     /* init level state */
     idmusnum = -1;
     G_InitNew(gameskill, gameepisode, gamemap, false);
+	
+	/* enforce ldre longtics */
+    if (usedHeader) {
+        longtics = x_longtics;
+    }
 
      /* g_initnew resets playeringame to 0. we must restore
      * the active player mask before calling p_unarchiveplayers or
@@ -752,4 +760,10 @@ int x_loadSavepoint(int dest) {
     R_FillBackScreen();
     save_p = savebuffer = NULL;
     return 0;
+}
+
+void x_initLongticsDefault(void) {
+    x_longtics = dsda_Flag(dsda_arg_longtics);
+    longtics = x_longtics;
+    usedHeader = true;
 }
