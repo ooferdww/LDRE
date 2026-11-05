@@ -12,8 +12,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 find_package(SDL2 REQUIRED)
-find_package(wxWidgets REQUIRED COMPONENTS core base adv)
-include(${wxWidgets_USE_FILE})
 
 add_subdirectory(dsda-doom/prboom2)
 add_subdirectory(xdre)

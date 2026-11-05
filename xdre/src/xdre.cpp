@@ -1,8 +1,5 @@
-/*
- * This file is part of XDRE.
- *
- * Description: controls the program.
-*/
+/* LDRE: Functions
+ * Authors: RamboBones, xepop, vita, almostmatt1, ooferdww */
 
 #include <vector>
 #include <cstring>
@@ -17,7 +14,7 @@ extern "C" {
     #include "d_event.h"
     #include "doomstat.h"
     #include "d_ticcmd.h"
-    #include "cstuff.h"
+    #include "ldre_c.h"
 	#include "dsda/configuration.h"
 	#include "hu_stuff.h"
     #include "st_stuff.h"
@@ -354,11 +351,13 @@ void goForward(int numTics) {
                     && (leveltime == 1
                         || doSaveTic == gametic)) {
                 x_setSavepoint(0);
+                savepoint = gametic;
             } else if (savepointStyle == SpStyle::SP_START
                     && gametic > 1
                     && savepoint != gametic
                     && leveltime == 1) {
                 x_setSavepoint(0);
+                savepoint = gametic;
             }
         }
 
@@ -843,7 +842,7 @@ static std::ptrdiff_t getLastActionIndex(int p) {
 }
 
 void xdre::newTic() {
-    auto const curIdx = std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]);
+    /* auto const curIdx = std::distance(std::begin(tics[displayplayer]), nextTic[displayplayer]); */
 
     /* insert WT to active player */
     nextTic[displayplayer] = tics[displayplayer].emplace(nextTic[displayplayer], ticcmd_t{});

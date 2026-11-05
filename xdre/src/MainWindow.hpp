@@ -1,59 +1,16 @@
-/*
- * This file is part of XDRE.
- *
- * XDRE is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
- *
- * XDRE is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with XDRE.  If not, see <http://www.gnu.org/licenses/>.
- *
- * Этот файл — часть XDRE.
- *
- * XDRE — свободная программа: вы можете перераспространять её и/или
- * изменять её на условиях Стандартной общественной лицензии GNU в том виде,
- * в каком она была опубликована Фондом свободного программного обеспечения;
- * либо версии 2 лицензии, либо (по вашему выбору) любой более поздней
- * версии.
- *
- * XDRE распространяется в надежде, что она будет полезной,
- * но БЕЗО ВСЯКИХ ГАРАНТИЙ; даже без неявной гарантии ТОВАРНОГО ВИДА
- * или ПРИГОДНОСТИ ДЛЯ ОПРЕДЕЛЕННЫХ ЦЕЛЕЙ. Подробнее см. в Стандартной
- * общественной лицензии GNU.
- *
- * Вы должны были получить копию Стандартной общественной лицензии GNU
- * вместе с этой программой. Если это не так, см.
- * <http://www.gnu.org/licenses/>.
- *
- * Description: main window declarations.
-*/
-
 #ifndef __MAINWINDOW_HPP
 #define __MAINWINDOW_HPP
 
-#include <functional>
-
-#include <wx/stattext.h>
-#include <wx/statbox.h>
-#include <wx/menu.h>
-#include <wx/textctrl.h>
-#include <wx/checkbox.h>
-#include <wx/panel.h>
-#include <wx/choice.h>
-#include <wx/frame.h>
-#include "TiclistCtrl.hpp"
-#include <wx/combobox.h>
-#include <wx/button.h>
-#include <wx/fileconf.h>
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include "xdre.hpp"
 
 enum class XCmd {
-    //commands without value, let exit be last of these
+    None,
     Fire,
     Use,
     TurnStepLeft,
@@ -69,18 +26,15 @@ enum class XCmd {
     Load,
     Save,
     Exit,
-    //commands with one digit value, let weapon be last of these
     ChangePlayer,
     TransposeLeft,
     TransposeRight,
     Weapon,
-    //commands with char
     RunBwd,
     RunFwd,
     StrafeLeft,
     StrafeRight,
     TurnStep,
-    //commands with bigger value
     CopyTicX,
     DeleteTicX,
     TurnLeft,
@@ -89,96 +43,165 @@ enum class XCmd {
     ForwardDemo
 };
 
-
-WX_DECLARE_STRING_HASH_MAP(XCmd, StringToCommandMap);
-
-class MainWindow : public wxFrame {
+class MainWindow {
 public:
-    MainWindow(wxWindow* parent = NULL, wxWindowID id = wxID_ANY, wxPoint const& pos = wxDefaultPosition, wxSize const& size = wxDefaultSize);
-    virtual ~MainWindow();
+    MainWindow();
+    ~MainWindow();
+
+    void Init();
+    void Render();
     void SetKeys();
-#ifdef _WIN32
-    wxFileConfig config {"xdre", "wxEmptyString", "xdre.ini"};
-#else
-    wxFileConfig config {"xdre", "wxEmptyString", ".xdre/xdre"};
-#endif // _WIN32
+    void LoadConfig();
+    void WriteConfig();
+    void DoInput(XCmd cmd, unsigned int val = 0);
 
-    wxPanel* panel;
-    wxMenuBar *menuBar;
-    wxMenu *menuFile, *menuDemo, *menuTools, *menuOptions;
-    wxMenuItem *menuFileLoad, *menuFileSave, *menuFileExit, *menuToolsBrute, *menuToolsHeader, *menuOptionsKeys, *menuOptionsClearTraces, *menuOptionsPalette;
-    TiclistCtrl *ticlist;
+    bool IsRunning() const { return m_running; }
+    void RequestExit() { m_showExitDialog = true; }
+    void ForceExit() { m_running = false; }
 
-    //Linedef Tracking
-    wxStaticBox *linedefBox;
-    wxStaticText *linedefLinedefText, *linedefHitSpecialText, *linedefXText, *linedefYText, *linedefV1Text, *linedefV2Text, *linedefDistFromLineText;
-    wxComboBox *linedefInputField;
-    wxButton *linedefAddButton;
-    wxTextCtrl *linedefCrossedTextCtrl, *linedefXV1TextCtrl, *linedefYV1TextCtrl, *linedefXV2TextCtrl, *linedefYV2TextCtrl, *linedefDistanceFromLineTextCtrl; 
+    XCmd GetCommandForString(const std::string& key) const {
+        auto it = m_stringToCommandMap.find(key);
+        if (it != m_stringToCommandMap.end()) return it->second;
+        return XCmd::None;
+    }
 
-    //Sector Tracking
-    wxStaticBox *sectorBox;
-    wxStaticText *sectorSectorTrackingText, *sectorSectorText, *sectorFloorText, *sectorCeilingText, *sectorEffectText; 
-    wxComboBox *sectorInputField;
-    wxButton *sectorAddButton;
-    wxTextCtrl *sectorFloorHeightTextCtrl, *sectorCeilingHeightTextCtrl, *sectorSpecialTextCtrl;
+    const std::string& GetStringForConfig(const std::string& configName) const {
+        static const std::string empty;
+        auto it = m_configToStringMap.find(configName);
+        if (it != m_configToStringMap.end()) return it->second;
+        return empty;
+    }
+	
+	// window position properties
+    int GetGuiPosX() const { return m_guiPosX; }
+    int GetGuiPosY() const { return m_guiPosY; }
+    int GetDoomPosX() const { return m_doomPosX; }
+    int GetDoomPosY() const { return m_doomPosY; }
 
-    //Thing Tracking
-    wxStaticBox *thingBox;
-    wxStaticText *thingThingText, *thingTicsText, *thingXText, *thingHealthText, *thingYText, *thingReactionTimeText, *thingZText, *thingThresholdText, *thingRadiusText; 
-    wxComboBox *thingInputField;
-    wxButton *thingAddButton;
-    wxTextCtrl *thingXTextCtrl, *thingYTextCtrl, *thingZTextCtrl, *thingRadiusTextCtrl, *thingTicsTextCtrl, *thingHealthTextCtrl, *thingReactionTimeTextCtrl, *thingThresholdTextCtrl;
-
-    //Player Tracking
-    wxStaticBox *playerBox;
-    wxStaticText *playerXText, *playerYText, *playerZText, *playerXDistText, *playerYDistText, *playerZDistText, *playerXMomText, *playerYMomText, *playerDistMovedText, *playerDirMovedText;
-    wxTextCtrl *playerXPosTextCtrl, *playerYPosTextCtrl, *playerZPosTextCtrl, *playerXMomTextCtrl, *playerYMomTextCtrl, *playerXDistTextCtrl, *playerYDistTextCtrl, *playerZDistTextCtrl, *playerDistMovedTextCtrl, *playerDirMovedTextCtrl;
-
-    //General
-    wxStaticBox *generalBox;
-    wxStaticText *generalInputText, *generalRNGText, *generalAngleText, *generalTicText, *generalDamageText, *generalSaveText, *generalTimeText, *generalUsedText;
-    wxTextCtrl *generalInputField, *generalRNGIndexTextCtrl, *generalPlayerAngleTextCtrl, *generalCurrentTicTextCtrl, *generalDamageDoneTextCtrl, *generalSavepointTicTextCtrl, *generalTimeTextCtrl, *generalUseSuccessTextCtrl;
-    wxChoice *generalAngleTypeChoice, *generalSavepointStyleChoice;
-
-	void RS();
-
-protected:
-    static const long IDM_LOAD, IDM_SAVE, IDM_EXIT, IDM_BRUTE, IDM_PALSTUFF, IDM_SETKEYS, IDM_HEADER, IDM_CLEARTRACES, IDM_IDLEREFRESH;
+    void SetGuiPos(int x, int y) { m_guiPosX = x; m_guiPosY = y; }
+    void SetDoomPos(int x, int y) { m_doomPosX = x; m_doomPosY = y; }
 
 private:
-    void DoInput(XCmd cmd, unsigned int val = 0);
-    void RefreshStuff();
-    void WriteConfig();
-    void Save();
-    void Load();
-    void Quit(bool canVeto = true);
+    void ProcessInputField(const char* input);
+    
+    // ui layout
+    void RenderMenuBar();
+    void RenderTicList();
+    void RenderTrackingPanels();
+    void RenderLinedefTracking();
+    void RenderSectorTracking();
+    void RenderThingTracking();
+    void RenderPlayerMovement();
+    void RenderGeneralSection();
+    
+    // native file dialog
+    std::string OpenNativeFileDialog(bool isSave);
+    void LoadReplayFile();
+    bool SaveReplayFile();
+    std::string m_lastDirectory = ".";
 
-    wxStringToStringHashMap configToStringMap {}; // config -> textCommand
-    StringToCommandMap stringToCommandMap {}; // textCommand -> XCmd
+    void RenderHeaderDialog();
+    void RenderKeysDialog();
+	void RenderExitDialog();
+    void RenderBruteForceDialog();
+	void RenderOptionsDialog();
 
-    void OnIdle(wxCommandEvent& event);
-    void OnClose(wxCloseEvent& event);
-    void OnInputFieldText(wxCommandEvent& event);
-    void OnAngleType(wxCommandEvent& event);
-    void OnLinedefInput(wxCommandEvent& event);
-    void OnLineAdd(wxCommandEvent& event);
-    void OnSectorInput(wxCommandEvent& event);
-    void OnSectorAdd(wxCommandEvent& event);
-    void OnThingInput(wxCommandEvent& event);
-    void OnThingAdd(wxCommandEvent& event);
-    void OnMenuExit(wxCommandEvent& event);
-    void OnMenuLoad(wxCommandEvent& event);
-    void OnMenuSave(wxCommandEvent& event);
-    void OnMenuBrute(wxCommandEvent& event);
-    void OnMenuSetKeys(wxCommandEvent& event);
-    void OnMenuPalStuff(wxCommandEvent& event);
-    void OnMenuHeader(wxCommandEvent& event);
-    void OnMenuClearTraces(wxCommandEvent& event);
-    void OnStyleChoiceSelect(wxCommandEvent& event);
+    bool m_running = true;
+    bool m_autoScrollTicList = true;
+	bool m_showExitDialog = false;
+	bool m_showOptionsDialog = false;
+	bool m_bloodEnabled = false;
+    bool m_bloodEditBuffer = false;
+	bool m_invertTicScrub = true;
+    bool m_invertTicScrubEditBuffer = true;
+    unsigned int m_lastRenderedTic = 0xFFFFFFFF;
 
-    DECLARE_EVENT_TABLE()
+    // config and keybindings
+    std::unordered_map<std::string, std::string> m_configToStringMap;
+    std::unordered_map<std::string, XCmd> m_stringToCommandMap;
+
+    // cmd input
+    char m_inputBuffer[128] = "";
+
+    // line sector thing track history
+    std::vector<std::string> m_linedefHistory = {"0"};
+    char m_linedefInput[32] = "0";
+    int m_selectedLinedefIndex = 0;
+
+    std::vector<std::string> m_sectorHistory = {"0"};
+    char m_sectorInput[32] = "0";
+    int m_selectedSectorIndex = 0;
+
+    std::vector<std::string> m_thingHistory = {"0"};
+    char m_thingInput[32] = "0";
+    int m_selectedThingIndex = 0;
+
+    int m_selectedAngleType = 3;
+    int m_selectedSavepointStyle = 1;
+
+    // modal state toggles
+    bool m_showHeaderDialog = false;
+    bool m_showKeysDialog = false;
+    bool m_showBruteDialog = false;
+
+    // header editor state
+    int m_headerOptions[28] = {0};
+    int m_headerComplevelIndex = 0;
+
+    // keys dialog state, has buffers for all keys
+    struct KeyBindEntry {
+        std::string actionName;
+        char buffer[32];
+    };
+    std::vector<KeyBindEntry> m_keyEditList;
+
+    // bruteforce engine state
+    struct BruteItem {
+        char ticStr[32] = "0";
+        char runStr[64] = "0";
+        char strafeStr[64] = "0";
+        char turnStr[64] = "0";
+        int fire = 0;
+        int use = 0;
+        int turnOrAngle = 0;
+    };
+
+    std::vector<BruteItem> m_bruteItems;
+    int m_selectedBruteItem = -1;
+
+    // bruteforce checks
+    int m_checkTic = 0;
+    bool m_checkUse = false;
+    bool m_rngActive = false;
+    int m_rngOp = 0;
+    char m_rngVal[64] = "0";
+
+    bool m_damageActive = false;
+    int m_damageOp = 0;
+    int m_damageVal = 0;
+
+    bool m_xPosActive = false; int m_xPosOp = 0; double m_xPosVal = 0.0;
+    bool m_yPosActive = false; int m_yPosOp = 0; double m_yPosVal = 0.0;
+    bool m_zPosActive = false; int m_zPosOp = 0; double m_zPosVal = 0.0;
+    bool m_xMomActive = false; int m_xMomOp = 0; double m_xMomVal = 0.0;
+    bool m_yMomActive = false; int m_yMomOp = 0; double m_yMomVal = 0.0;
+    bool m_speedActive = false; int m_speedOp = 0; double m_speedVal = 0.0;
+
+    int m_autoRangeChoice = 2; // range 3
+    bool m_avoidTurbo = true;
+	
+	// window position
+	int m_guiPosX  = -1;
+    int m_guiPosY  = -1;
+    int m_doomPosX = -1;
+    int m_doomPosY = -1;
+
+    // background threading
+    std::thread m_bruteThread;
+    std::atomic<bool> m_bruteRunning{false};
+    std::atomic<bool> m_abortBrute{false};
+    std::atomic<bool> m_bruteSuccess{false};
+    std::atomic<bool> m_bruteFinishedNotification{false};
 };
 
 #endif // __MAINWINDOW_HPP
-
