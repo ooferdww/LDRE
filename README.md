@@ -3,7 +3,14 @@ A highly work in progress demo editor for classic Doom games, used primarily for
 
 ## Build instructions
 
-Install the following dependencies if on Windows (use MSYS2 UCRT64):
+* Windows (Visual Studio 2026)
+
+1. Install LLVM, clang-cl, vcpkg and CMake within Visual Studio Installer.
+2. Run the batch file included in _build_vs, the output will be in source/build/windows-clang/xdre/Release.
+
+* Linux/MSYS2 instructions
+
+Install the following dependencies if on Windows (while using MSYS2 UCRT64):
 
 ```
 mingw-w64-ucrt-x86_64-git
