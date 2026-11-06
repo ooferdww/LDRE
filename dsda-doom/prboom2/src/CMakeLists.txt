@@ -535,9 +535,7 @@ if(WIN32)
     endif()
 endif()
 
-# ===================================================================
-# 1. Vanilla Engine Core (For Standalone dsda-doom)
-# ===================================================================
+# Vanilla engine core
 add_library(dsda-doom-core OBJECT ${DSDA_CORE_SOURCES})
 
 dsda_target_set_warnings(dsda-doom-core)
@@ -548,7 +546,7 @@ target_compile_definitions(dsda-doom-core PUBLIC HAVE_CONFIG_H)
 
 target_compile_features(dsda-doom-core PRIVATE cxx_std_11)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
     target_compile_options(dsda-doom-core PRIVATE
         $<$<COMPILE_LANGUAGE:C,CXX>:
             -O2
@@ -565,80 +563,78 @@ target_include_directories(dsda-doom-core PUBLIC
 )
 target_link_libraries(dsda-doom-core PUBLIC dsda::dependencies)
 
-# ===================================================================
-# 2. Standalone dsda-doom Executable (Vanilla, No XDRE hooks)
-# ===================================================================
-add_executable(dsda-doom WIN32 SDL/i_main.c)
+# standalone dsda-doom executable
+if(BUILD_DSDA_DOOM)
+    add_executable(dsda-doom WIN32 SDL/i_main.c)
 
-dsda_target_set_warnings(dsda-doom)
-dsda_target_silence_deprecation(dsda-doom)
-dsda_target_enable_fast_math(dsda-doom)
+    dsda_target_set_warnings(dsda-doom)
+    dsda_target_silence_deprecation(dsda-doom)
+    dsda_target_enable_fast_math(dsda-doom)
 
-target_compile_definitions(dsda-doom PRIVATE HAVE_CONFIG_H)
+    target_compile_definitions(dsda-doom PRIVATE HAVE_CONFIG_H)
 
-target_compile_features(dsda-doom PRIVATE cxx_std_11)
+    target_compile_features(dsda-doom PRIVATE cxx_std_11)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(dsda-doom PRIVATE
-        $<$<COMPILE_LANGUAGE:C,CXX>:
-            -O2
-            -fno-strict-aliasing
-            -fwrapv
-            -fstack-protector-strong
-        >
+    if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
+        target_compile_options(dsda-doom PRIVATE
+            $<$<COMPILE_LANGUAGE:C,CXX>:
+                -O2
+                -fno-strict-aliasing
+                -fwrapv
+                -fstack-protector-strong
+            >
+        )
+    endif()
+
+    target_include_directories(dsda-doom PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/../build-config
     )
-endif()
 
-target_include_directories(dsda-doom PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_BINARY_DIR}/../build-config
-)
+    target_link_libraries(dsda-doom PRIVATE dsda-doom-core)
 
-target_link_libraries(dsda-doom PRIVATE dsda-doom-core)
-
-set_target_properties(dsda-doom PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${DSDA_OUTPUT_PATH}
-    C_STANDARD 99
-)
-
-add_dependencies(dsda-doom dsda-doom-wad)
-add_custom_command(TARGET dsda-doom POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "Copying ${WAD_DATA_PATH} to $<TARGET_FILE_DIR:dsda-doom>"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WAD_DATA_PATH} $<TARGET_FILE_DIR:dsda-doom>
-)
-
-if(MSVC)
     set_target_properties(dsda-doom PROPERTIES
-        LINK_FLAGS "/MANIFEST:NO /SUBSYSTEM:CONSOLE"
+        RUNTIME_OUTPUT_DIRECTORY ${DSDA_OUTPUT_PATH}
+        C_STANDARD 99
     )
+
+    add_dependencies(dsda-doom dsda-doom-wad)
     add_custom_command(TARGET dsda-doom POST_BUILD
-        COMMAND "mt.exe" -manifest \"${CMAKE_CURRENT_SOURCE_DIR}\\..\\ICONS\\dsda-doom.exe.manifest\" -outputresource:\"$<TARGET_FILE:dsda-doom>\"\;\#1
+        COMMAND ${CMAKE_COMMAND} -E echo "Copying ${WAD_DATA_PATH} to $<TARGET_FILE_DIR:dsda-doom>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${WAD_DATA_PATH} $<TARGET_FILE_DIR:dsda-doom>
     )
-elseif(WIN32)
-    set_target_properties(dsda-doom PROPERTIES
-        LINK_FLAGS "-mconsole"
-    )
+
+    if(MSVC)
+        set_target_properties(dsda-doom PROPERTIES
+            LINK_FLAGS "/MANIFEST:NO /SUBSYSTEM:CONSOLE"
+        )
+        add_custom_command(TARGET dsda-doom POST_BUILD
+            COMMAND "mt.exe" -manifest "${CMAKE_CURRENT_SOURCE_DIR}/../ICONS/dsda-doom.exe.manifest" -outputresource:"$<TARGET_FILE:dsda-doom>"\;\#1
+        )
+    elseif(WIN32)
+        set_target_properties(dsda-doom PROPERTIES
+            LINK_FLAGS "-mconsole"
+        )
+    endif()
+
+    if(CMAKE_VERSION VERSION_GREATER 3.20
+        AND WIN32
+        AND NOT VCPKG_TOOLCHAIN
+        AND NOT CMAKE_CROSSCOMPILING)
+        install(
+            TARGETS dsda-doom
+            RUNTIME_DEPENDENCIES
+                PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
+                POST_EXCLUDE_REGEXES ".*system32/.*\\.dll"
+                DIRECTORIES $<TARGET_FILE_DIR:dsda-doom> $ENV{PATH}
+            RUNTIME DESTINATION "${DSDA_INSTALL_BINDIR}"
+        )
+    else()
+        install(TARGETS dsda-doom RUNTIME DESTINATION "${DSDA_INSTALL_BINDIR}")
+    endif()
 endif()
 
-if(CMAKE_VERSION VERSION_GREATER 3.20
-    AND WIN32
-    AND NOT VCPKG_TOOLCHAIN
-    AND NOT CMAKE_CROSSCOMPILING)
-    install(
-        TARGETS dsda-doom
-        RUNTIME_DEPENDENCIES
-            PRE_EXCLUDE_REGEXES "api-ms-" "ext-ms-"
-            POST_EXCLUDE_REGEXES ".*system32/.*\\.dll"
-            DIRECTORIES $<TARGET_FILE_DIR:dsda-doom> $ENV{PATH}
-        RUNTIME DESTINATION "${DSDA_INSTALL_BINDIR}"
-    )
-else()
-    install(TARGETS dsda-doom RUNTIME DESTINATION "${DSDA_INSTALL_BINDIR}")
-endif()
-
-# ===================================================================
-# 3. XDRE Engine Core (Compiled with XDRE=1)
-# ===================================================================
+# ldre core
 add_library(dsda-doom-core-xdre OBJECT ${DSDA_CORE_SOURCES})
 
 dsda_target_set_warnings(dsda-doom-core-xdre)
@@ -652,7 +648,7 @@ target_compile_definitions(dsda-doom-core-xdre PUBLIC
 
 target_compile_features(dsda-doom-core-xdre PRIVATE cxx_std_11)
 
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
     target_compile_options(dsda-doom-core-xdre PRIVATE
         $<$<COMPILE_LANGUAGE:C,CXX>:
             -O2

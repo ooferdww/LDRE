@@ -10,7 +10,9 @@
 #include "xdre.hpp"
 #include "MainWindow.hpp"
 
-extern SDL_Window *sdl_window;
+extern "C" {
+    extern SDL_Window *sdl_window;
+}
 
 int main(int argc, char** argv) {
     // init doom
@@ -36,7 +38,7 @@ int main(int argc, char** argv) {
 
     // build gui window
     SDL_Window* guiWindow = SDL_CreateWindow(
-        "LDRE v0.3 beta",
+        "LDRE v0.3.1 beta",
         guiX,
         guiY,
         780,

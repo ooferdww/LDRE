@@ -23,6 +23,12 @@
 #ifndef MD5_H
 #define MD5_H
 
+/* avoid symbol collisions */
+#define MD5Init      dsda_MD5Init
+#define MD5Update    dsda_MD5Update
+#define MD5Final     dsda_MD5Final
+#define MD5Transform dsda_MD5Transform
+
 #ifdef _MSC_VER
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
