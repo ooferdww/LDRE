@@ -53,5 +53,6 @@ void dsda_StoreDemoData(byte complete);
 void dsda_RestoreDemoData(byte complete);
 int dsda_DemoTicsCount(const byte* p, const byte* demobuffer, int demolength);
 const byte* dsda_DemoMarkerPosition(byte* buffer, size_t file_size);
+void dsda_ApplyAndPreserveDemoData(const ticcmd_t* cmds, int count);
 
 #endif

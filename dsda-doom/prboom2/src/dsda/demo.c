@@ -860,3 +860,22 @@ const byte* dsda_DemoMarkerPosition(byte* buffer, size_t file_size) {
 
   return p;
 }
+
+void dsda_ApplyAndPreserveDemoData(const ticcmd_t* cmds, int count) {
+  int i;
+  extern void G_WriteTiccmdToBuffer(ticcmd_t* cmd);
+
+  if (!dsda_demo_write_buffer || count <= 0)
+    return;
+
+  // let the engine serialize winning tics with their own layout
+  for (i = 0; i < count; ++i) {
+    dsda_EnsureDemoBufferSpace(16);
+    G_WriteTiccmdToBuffer((ticcmd_t*)&cmds[i]);
+  }
+
+  // restore write head to original boundary
+  if (largest_real_offset > dsda_DemoBufferOffset()) {
+    dsda_demo_write_buffer_p = dsda_demo_write_buffer + largest_real_offset;
+  }
+}

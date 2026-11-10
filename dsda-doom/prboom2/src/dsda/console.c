@@ -607,6 +607,10 @@ static dboolean console_DemoStop(const char* command, const char* args) {
 }
 
 static dboolean console_DemoJoin(const char* command, const char* args) {
+  // if playback already auto joined on stream end, joining is already complete
+  if (demorecording && !demoplayback)
+    return true;
+
   if (!demoplayback)
     return false;
 
@@ -900,6 +904,16 @@ static dboolean console_BruteForceFrame(const char* command, const char* args) {
                                  sidemove_min, sidemove_max,
                                  angleturn_min, angleturn_max,
                                  buttons);
+}
+
+static dboolean console_BruteForceTargetFrame(const char* command, const char* args) {
+  int frame;
+
+  if (sscanf(args, "%d", &frame) != 1 || frame < 0)
+    return false;
+
+  dsda_SetBruteForceTargetFrame(frame);
+  return true;
 }
 
 static dboolean console_BruteForceStart(const char* command, const char* args) {
@@ -2450,6 +2464,9 @@ static console_command_entry_t console_commands[] = {
   { "bf.nomo", console_BruteForceNoMonsters, CF_DEMO },
   { "brute_force.monsters", console_BruteForceMonsters, CF_DEMO },
   { "bf.mo", console_BruteForceMonsters, CF_DEMO },
+  { "brute_force.target_frame", console_BruteForceTargetFrame, CF_DEMO },
+  { "bf.target_frame", console_BruteForceTargetFrame, CF_DEMO },
+  { "bf.tf", console_BruteForceTargetFrame, CF_DEMO },
   { "build.turbo", console_BuildTurbo, CF_DEMO },
   { "b.turbo", console_BuildTurbo, CF_DEMO },
   { "mf", console_BuildMF, CF_DEMO },

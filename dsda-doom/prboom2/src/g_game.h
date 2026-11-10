@@ -67,6 +67,7 @@ void G_StartDemoPlayback(const byte *buffer, int length, int behaviour);
 void G_DoPlayDemo(void);
 void G_DoCompleted(void);
 void G_WriteDemoTiccmd(ticcmd_t *cmd);
+void G_WriteTiccmdToBuffer(ticcmd_t* cmd);
 void G_DoWorldDone(void);
 void G_Compatibility(void);
 const byte *G_ReadOptions(const byte *demo_p);   /* killough 3/1/98 - cph: const byte* */

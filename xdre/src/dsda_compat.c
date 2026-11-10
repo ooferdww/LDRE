@@ -29,6 +29,7 @@
 #include "SDL.h"
 #include "smooth.h"
 #include "r_fps.h"
+#include "w_wad.h"
 
 extern SDL_Window *sdl_window;
 extern void dsda_UpdateFlag(dsda_arg_identifier_t id, dboolean found);
@@ -196,20 +197,19 @@ void mainDoom(int argc, char** argv) {
     dsda_UpdateIntConfig(dsda_config_uncapped_framerate, 0, false);
 }
 
-/* i/o */
 void XDRE_WriteDemoTiccmd(const ticcmd_t *cmd, FILE *file) {
-    if (!longtics) {
-        fputc(cmd->forwardmove, file);
-        fputc(cmd->sidemove, file);
-        fputc((cmd->angleturn) >> 8, file);
-        fputc(cmd->buttons, file);
-    } else {
-        fputc(cmd->forwardmove, file);
-        fputc(cmd->sidemove, file);
+    fputc(cmd->forwardmove, file);
+    fputc(cmd->sidemove, file);
+
+    // 5 byte turns in mbf21
+    if (longtics || compatibility_level == mbf21_compatibility) {
         fputc(cmd->angleturn & 0xff, file);
         fputc((cmd->angleturn >> 8) & 0xff, file);
-        fputc(cmd->buttons, file);
+    } else {
+        fputc((cmd->angleturn) >> 8, file);
     }
+
+    fputc(cmd->buttons, file);
 }
 
 void XDRE_WriteDemoFooter(FILE *file) {
@@ -219,4 +219,49 @@ void XDRE_WriteDemoFooter(FILE *file) {
 /* expose demo header to c++ */
 unsigned char const* XDRE_ReadDemoHeader(unsigned char const* demo_p, size_t size) {
     return G_ReadDemoHeaderEx(demo_p, size, 0);
+}
+
+void XDRE_GetLoadedWads(char *iwad_out, size_t iwad_len, char *pwad_out, size_t pwad_len) {
+    size_t i;
+    iwad_out[0] = '\0';
+    pwad_out[0] = '\0';
+
+    for (i = 0; i < numwadfiles; ++i) {
+        const char *path = wadfiles[i].name;
+        if (!path || !*path)
+            continue;
+
+        /* extract filename from path for comparison */
+        const char *slash = strrchr(path, '/');
+        const char *bslash = strrchr(path, '\\');
+        const char *name = path;
+        if (slash && slash >= name) name = slash + 1;
+        if (bslash && bslash >= name) name = bslash + 1;
+
+        /* exclude dsda-doom.wad */
+        if (strcasecmp(name, "dsda-doom.wad") == 0)
+            continue;
+
+        /* check against 4 standard iwads */
+        if (strcasecmp(name, "doom.wad") == 0 ||
+            strcasecmp(name, "doom2.wad") == 0 ||
+            strcasecmp(name, "plutonia.wad") == 0 ||
+            strcasecmp(name, "tnt.wad") == 0) {
+            strncpy(iwad_out, path, iwad_len - 1);
+            iwad_out[iwad_len - 1] = '\0';
+        } else {
+            /* append pwads with spaces */
+            char quoted[1024];
+            snprintf(quoted, sizeof(quoted), "\"%s\" ", path);
+            if (strlen(pwad_out) + strlen(quoted) < pwad_len) {
+                strcat(pwad_out, quoted);
+            }
+        }
+    }
+
+    /* strip space if only one pwad was added */
+    size_t pwad_len_actual = strlen(pwad_out);
+    if (pwad_len_actual > 0 && pwad_out[pwad_len_actual - 1] == ' ') {
+        pwad_out[pwad_len_actual - 1] = '\0';
+    }
 }

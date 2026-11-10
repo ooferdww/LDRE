@@ -1442,6 +1442,10 @@ int xdre::getTicTurn(int ticIndex) {
     return curTics[ticIndex].angleturn / divisor;
 }
 
+unsigned int xdre::getLevelStartTic() {
+    return static_cast<unsigned int>(x_getLevelStartTic());
+}
+
 /* graveyard of currently defunct functions
  * using these will probably give you a bad time lol */
 

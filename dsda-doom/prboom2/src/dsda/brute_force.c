@@ -96,6 +96,8 @@ static int bf_progress_counter;
 extern int xUseSuccess;
 static dboolean bf_check_use_active = false;
 
+static int bf_target_frame = -1;
+
 static dboolean bf_quiet;
 
 void dsda_SetBFQuiet(dboolean quiet) {
@@ -174,7 +176,7 @@ static dboolean fixed_point_attribute[dsda_bf_attribute_max] = {
   [dsda_bf_momx] = true,
   [dsda_bf_momy] = true,
   [dsda_bf_speed] = true,
-  [dsda_bf_damage] = true,
+  [dsda_bf_damage] = false,
   [dsda_bf_rng] = false,
   [dsda_bf_arm] = false,
   [dsda_bf_hp] = false,
@@ -281,11 +283,20 @@ dboolean dsda_BruteForceEnded(void) {
 }
 
 static void dsda_EndBF(int result) {
+  int i;
   brute_force_ended = true;
 
   lprintf(LO_INFO, "Brute force complete (%s)!\n", bf_result_text[result]);
   dsda_PrintBFProgress();
 
+  if (result == BF_SUCCESS && bf_target.enabled && bf_target.evaluated) {
+    for (i = 0; i < bf_target.best_depth; ++i) {
+      brute_force[i] = bf_target.best_bf[i];
+    }
+    dsda_CopyBFResult(bf_target.best_bf, bf_target.best_depth);
+  }
+
+  // restore game state to beginning of bf window
   if (bf_nomonsters)
     dsda_RestoreKeyFrame(&nomo_key_frame, true);
   else
@@ -293,10 +304,20 @@ static void dsda_EndBF(int result) {
 
   bf_mode = false;
 
-  if (result == BF_SUCCESS)
-    dsda_QueueBuildCommands(bf_result, bf_depth);
-  else
+  if (result == BF_SUCCESS) {
+    int write_depth = (bf_target.enabled && bf_target.evaluated) ? bf_target.best_depth : bf_depth;
+
+    // queue cmds
+    dsda_QueueBuildCommands(bf_result, write_depth);
+
+    // apply winning inputs to buffer and preserve trailing tics
+    if (dsda_Flag(dsda_arg_recordfromto)) {
+      dsda_ApplyAndPreserveDemoData(bf_result, write_depth);
+    }
+  }
+  else {
     dsda_ExitSkipMode();
+  }
 }
 
 static fixed_t dsda_BFAttribute(int attribute) {
@@ -581,11 +602,21 @@ dboolean dsda_BruteForce(void) {
   return bf_mode;
 }
 
+// target frame feature
+void dsda_SetBruteForceTargetFrame(int frame) {
+  bf_target_frame = frame;
+}
+
+int dsda_GetBruteForceTargetFrame(void) {
+  return bf_target_frame;
+}
+
 void dsda_ResetBruteForceConditions(void) {
   bf_condition_count = 0;
   memset(&bf_target, 0, sizeof(bf_target));
   bf_check_use_active = false;
   xUseSuccess = 0;
+  bf_target_frame = -1; // reset target frame
 }
 
 void dsda_AddMiscBruteForceCondition(dsda_bf_attribute_t attribute, fixed_t value) {
@@ -900,9 +931,9 @@ void dsda_TickBruteForce(void) {
   if (dsda_BFConditionsReached()) {
     dsda_CopyBFResult(brute_force, bf_depth);
     dsda_EndBF(BF_SUCCESS);
-	if (bf_check_use_active) {
+    if (bf_check_use_active) {
       xUseSuccess = 0;
-	}
+    }
     return;
   }
 

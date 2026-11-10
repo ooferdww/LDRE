@@ -761,3 +761,39 @@ void x_initLongticsDefault(void) {
     longtics = x_longtics;
     usedHeader = true;
 }
+
+int x_getLevelStartTic(void) {
+    extern int totalleveltimes;
+
+    /* if no prior level times exist, we're on the first level */
+    if (totalleveltimes == 0)
+        return 0;
+
+    int map = gamemap;
+    if (map <= 0 || map >= MAXSSP)
+        return 0;
+
+    /* check if any previous map recorded a savepoint */
+    dboolean has_prior_map = false;
+    for (int m = 1; m < map; ++m) {
+        if (savepoints[m].save && savepoints[m].tic > 0) {
+            has_prior_map = true;
+            break;
+        }
+    }
+
+    if (!has_prior_map)
+        return 0;
+
+    /* Direct lookup in the map savepoint array */
+    if (savepoints[map].save && savepoints[map].tic > 0)
+        return savepoints[map].tic;
+
+    /* fallback: search backwards for the nearest recorded map boundary */
+    for (int m = map; m > 0; --m) {
+        if (savepoints[m].save && savepoints[m].tic > 0)
+            return savepoints[m].tic;
+    }
+
+    return 0;
+}

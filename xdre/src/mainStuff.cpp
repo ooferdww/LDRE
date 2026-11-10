@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
 
     // build gui window
     SDL_Window* guiWindow = SDL_CreateWindow(
-        "LDRE v0.4.0 beta",
+        "LDRE v0.4.1 beta",
         guiX,
         guiY,
         780,

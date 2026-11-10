@@ -140,11 +140,12 @@ private:
     char m_brsExtraArgs[256] = "-bf_quiet -nosound -geom 320x240";
     int m_brsThreadGoal = 0;
     bool m_brsNomo = false;
-    bool m_brsPreserveUndefined = true;
     int m_brsAutoRangePreset = 2; // Default range 3
 	bool m_brsAutoLoadResult = true;
     bool m_brsAutoLoadResultEditBuffer = true;
-    int  m_brsInitialTic = 0;
+    int m_brsInitialTic = 0;
+	int m_brsTargetTic = 0;
+	int GetSelectedComplevel() const;
     std::atomic<bool> m_brsPendingReload{false};
     std::string m_brsPendingReloadPath = "";
 

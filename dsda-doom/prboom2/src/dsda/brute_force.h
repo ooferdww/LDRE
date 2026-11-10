@@ -115,3 +115,5 @@ void dsda_TickBruteForce(void);
 void dsda_SetBFQuiet(dboolean quiet);
 dboolean dsda_LoadNextBFQueueSlice(void);
 void dsda_CopyBruteForceCommand(ticcmd_t* cmd);
+void dsda_SetBruteForceTargetFrame(int frame);
+int dsda_GetBruteForceTargetFrame(void);

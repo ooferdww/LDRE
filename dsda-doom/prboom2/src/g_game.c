@@ -3296,6 +3296,11 @@ void G_WriteDemoTiccmd (ticcmd_t* cmd)
   G_ReadOneTick(cmd, &data_p);
 }
 
+/* demo byte detection */
+void G_WriteTiccmdToBuffer(ticcmd_t* cmd) {
+  G_WriteDemoTiccmd(cmd);
+}
+
 // These functions are used to read and write game-specific options in demos
 // and savegames so that demo sync is preserved and savegame restoration is
 // complete. Not all options (for example "compatibility"), however, should

@@ -18,6 +18,8 @@
 #include <cctype>
 #include <vector>
 
+extern "C" void XDRE_GetLoadedWads(char *iwad_out, size_t iwad_len, char *pwad_out, size_t pwad_len);
+
 // bruteforce temporary saves
 static std::string GetExeDirectory() {
 #ifdef _WIN32
@@ -48,6 +50,18 @@ static std::string GetBFBackupDirectory() {
 static void Win32_CreateDirectory(const std::string& path) {
 #ifdef _WIN32
     CreateDirectoryA(path.c_str(), NULL);
+#endif
+}
+
+// slash fixer
+static void NormalizePathSeparators(char* path) {
+    if (!path) return;
+#ifdef _WIN32
+    for (size_t i = 0; path[i] != '\0'; ++i) {
+        if (path[i] == '/') {
+            path[i] = '\\';
+        }
+    }
 #endif
 }
 
@@ -288,6 +302,13 @@ void MainWindow::Init() {
         unsigned int hw = std::thread::hardware_concurrency();
         m_brsThreadGoal = (hw > 0) ? static_cast<int>(hw) : 8;
     }
+	
+	// populate iwad and pwad paths from internal tables
+    XDRE_GetLoadedWads(m_brsIwadPath, sizeof(m_brsIwadPath), m_brsPwadPath, sizeof(m_brsPwadPath));
+
+    // normalize separators to backslahes on wingdings
+    NormalizePathSeparators(m_brsIwadPath);
+    NormalizePathSeparators(m_brsPwadPath);
 }
 
 void MainWindow::RenderExitDialog() {
@@ -574,6 +595,11 @@ void MainWindow::RenderMenuBar() {
         if (ImGui::BeginMenu("Tools")) {
             if (ImGui::MenuItem("Brute-force...")) {
                 m_brsInitialTic = static_cast<int>(xdre::getCurrentTic());
+				m_brsTargetTic  = m_brsInitialTic; // default target tic to current tic
+
+                // ensure active options from ldre are refreshed
+                xdre::getOptions(m_headerOptions);
+
                 // temporary demo
                 std::string tempDemo = GetExeDirectory() + "brs_temp_input.lmp";
                 FILE* f = std::fopen(tempDemo.c_str(), "wb");
@@ -1372,31 +1398,25 @@ void MainWindow::RenderOptionsDialog() {
     }
 }
 
-static int BRS_GetComplevel(const char* demoPath) {
-    int options[28] = {0};
+int MainWindow::GetSelectedComplevel() const {
+    int options[28] = { 0 };
     xdre::getOptions(options);
-    if (options[0] > 0) return options[0];
 
-    // fallback: parse demo header directly
-    std::ifstream file(demoPath, std::ios::binary);
-    if (!file) return 2; // default to cl2
-
-    char b = 0;
-    if (file.get(b)) {
-        unsigned char fb = static_cast<unsigned char>(b);
-        if (fb == 255) { // UMAPINFO header present (27 bytes)
-            file.seekg(26, std::ios::cur);
-            if (file.get(b)) {
-                unsigned char cl = static_cast<unsigned char>(b);
-                if (cl == 109) return 2;
-                if (cl == 202) return 9;
-                if (cl == 203) return 11;
-            }
-        } else if (fb == 109) return 2;
-        else if (fb == 202) return 9;
-        else if (fb == 203) return 11;
+    // get complevel from options[0] directly
+    for (int cl : s_allowedComplevels) {
+        if (options[0] == cl) {
+            return cl;
+        }
     }
-    return 2;
+
+    // fallback to whatever header editor currently has
+    for (int cl : s_allowedComplevels) {
+        if (m_headerOptions[0] == cl) {
+            return cl;
+        }
+    }
+
+    return 2; // default to doom 2
 }
 
 void MainWindow::CleanupBRSArtifacts(int winningIndex) {
@@ -1667,9 +1687,27 @@ void MainWindow::BRSWorkerThread() {
     auto increments = BRS_ProduceRangeIncrements(winningPairs, ticsAscending);
     auto finalCombinations = BRS_ProduceFinalCombinations(increments, bestFoundSlices);
 
-    int complevel = BRS_GetComplevel(m_brsDemoPath);
+    int complevel = GetSelectedComplevel();
     int baseTic   = ticsAscending.empty() ? 0 : ticsAscending.front().ticNumber;
     int endTic    = ticsAscending.empty() ? 0 : ticsAscending.back().ticNumber;
+	
+	// fetch active map and episode from ldre
+    int currentOptions[28] = { 0 };
+    xdre::getOptions(currentOptions);
+    int curEpisode = currentOptions[2];
+    int curMap     = currentOptions[3];
+    if (curMap <= 0) curMap = 1;
+
+    int levelStartTic = static_cast<int>(xdre::getLevelStartTic());
+    int localSkipTarget = 0;
+
+    if (levelStartTic > 0 && baseTic >= levelStartTic) {
+        // multilevel run: levelStartTic was set at leveltime == 1
+        localSkipTarget = (std::max)(0, baseTic - levelStartTic);
+    } else {
+        // first map or il demo: standard zero indexed baseline
+        localSkipTarget = (std::max)(0, baseTic - 1);
+    }
 
     std::string bfDir = GetBFDirectory();
     Win32_CreateDirectory(bfDir);
@@ -1810,7 +1848,18 @@ void MainWindow::BRSWorkerThread() {
 
         // outputdemo and queue will be local names
         cmd += "-recordfromto \"" + std::string(m_brsDemoPath) + "\" \"outputdemo" + std::to_string(w) + ".lmp\" ";
-        cmd += "-skiptic " + std::to_string((std::max)(0, baseTic - 1)) + " ";
+		
+		// append warp if not already present in extra args
+        if (std::string(m_brsExtraArgs).find("-warp") == std::string::npos) {
+            if (complevel == 3) {
+                cmd += "-warp " + std::to_string(curEpisode > 0 ? curEpisode : 1) + " " + std::to_string(curMap) + " ";
+            } else {
+                cmd += "-warp " + std::to_string(curMap) + " ";
+            }
+        }
+
+        // use local map skiptic
+        cmd += "-skiptic " + std::to_string(localSkipTarget) + " ";
 
         if (std::string(m_brsExtraArgs).find("-complevel") == std::string::npos &&
             std::string(m_brsExtraArgs).find("-cl") == std::string::npos) {
@@ -1822,17 +1871,27 @@ void MainWindow::BRSWorkerThread() {
 
         if (m_brsNomo) cmd += "bf.nomo; ";
 
-        if (m_brsPreserveUndefined) {
-            for (int t = baseTic; t < endTic; ++t) {
-                bool isBruted = false;
-                for (const auto& item : ticsAscending) {
-                    if (item.ticNumber == t) { isBruted = true; break; }
+        // target tic for conditions
+        int targetEvalTic = (std::max)(endTic, m_brsTargetTic);
+
+        // must run through target tic
+        int maxTargetTic = (std::max)(endTic, targetEvalTic);
+        int totalDepth = (maxTargetTic - baseTic) + 1;
+
+        // preserve every tic basetic to maxtargettic that wasn't modulated
+        for (int t = baseTic; t <= maxTargetTic; ++t) {
+            bool isModulated = false;
+            for (const auto& item : ticsAscending) {
+                if (item.ticNumber == t) {
+                    isModulated = true;
+                    break;
                 }
-                if (!isBruted) cmd += "bf.keep " + std::to_string(t - baseTic) + "; ";
+            }
+            if (!isModulated) {
+                cmd += "bf.keep " + std::to_string(t - baseTic) + "; ";
             }
         }
 
-        int totalDepth = (endTic - baseTic) + 1;
         cmd += "bf.start " + std::to_string(totalDepth) + " " + condStr + "\"";
 
         taskQueue.push_back({w, cmd});
@@ -2040,9 +2099,9 @@ void MainWindow::RenderBRSDialog() {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(780, 680), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(676.0f, 0), ImGuiCond_Always);
 
-    if (ImGui::BeginPopupModal("Brute-force", nullptr, ImGuiWindowFlags_None)) {
+    if (ImGui::BeginPopupModal("Brute-force", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         
         // top section
         ImGui::Columns(2, "BRSTopSplit", true);
@@ -2167,7 +2226,10 @@ void MainWindow::RenderBRSDialog() {
 
         // right column
         ImGui::NextColumn();
-        ImGui::Text("Conditions to Match");
+        ImGui::Text("Conditions to match on tic:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::InputInt("##targetTicInput", &m_brsTargetTic, 0, 0);
         ImGui::Separator();
 
         const char* ops[] = {"=", "!=", ">=", ">", "<=", "<", "Min", "Max"};
@@ -2267,18 +2329,19 @@ void MainWindow::RenderBRSDialog() {
         maxThreads = (std::max)(maxThreads, static_cast<int>(m_brsThreadGoal));
 
         const float labelWidth = 100.0f;
+        const float fieldWidth = 546.0f;
 
         // threads
         ImGui::Text("CPU Workers:");
         ImGui::SameLine(labelWidth);
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::SetNextItemWidth(fieldWidth);
         ImGui::SliderInt("##CPUWorkers", &m_brsThreadGoal, 1, maxThreads);
 
         // paths and arguments
         auto RenderLeftLabeledInput = [&](const char* label, const char* id, char* buf, size_t bufSize) {
             ImGui::Text("%s:", label);
             ImGui::SameLine(labelWidth);
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            ImGui::SetNextItemWidth(fieldWidth);
             ImGui::InputText(id, buf, bufSize);
         };
 
@@ -2288,8 +2351,6 @@ void MainWindow::RenderBRSDialog() {
         RenderLeftLabeledInput("Extra Args", "##extraArgs", m_brsExtraArgs, sizeof(m_brsExtraArgs));
 
         ImGui::Checkbox("DSDA NoMo mode (-nomo)", &m_brsNomo);
-        ImGui::SameLine(220.0f);
-        ImGui::Checkbox("Preserve Undefined Tics", &m_brsPreserveUndefined);
 
         ImGui::Separator();
 
@@ -2315,13 +2376,15 @@ void MainWindow::RenderBRSDialog() {
             }
         }
 
+        ImGui::Separator();
+        ImGui::Text("Results / Log:");
+        ImGui::BeginChild("BRSResultBox", ImVec2(0, 75), true, ImGuiWindowFlags_HorizontalScrollbar);
         if (!m_brsResultDetails.empty()) {
-            ImGui::Separator();
-            ImGui::Text("Results:");
-            ImGui::BeginChild("BRSResultBox", ImVec2(0, 60), true);
             ImGui::TextUnformatted(m_brsResultDetails.c_str());
-            ImGui::EndChild();
+        } else {
+            ImGui::TextDisabled("Idle - awaiting search output...");
         }
+        ImGui::EndChild();
 
         ImGui::EndPopup();
     }

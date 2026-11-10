@@ -116,6 +116,8 @@ namespace xdre {
 	int getTicRun(int ticIndex);
     int getTicStrafe(int ticIndex);
     int getTicTurn(int ticIndex);
+	
+	unsigned int getLevelStartTic();
 };
 
 
