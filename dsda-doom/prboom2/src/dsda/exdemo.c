@@ -501,10 +501,19 @@ static void DemoEx_AddFeatures(wadtbl_t* wadtbl) {
   Z_Free(description);
 }
 
+#ifdef XDRE
+static void DemoEx_AddPort(wadtbl_t* wadtbl) {
+  const char* const port_id = "ldre 0.4.0 beta";
+
+  AddPWADTableLump(wadtbl, DEMOEX_PORTNAME_LUMPNAME,
+                   (const byte*) port_id, strlen(port_id));
+}
+#else
 static void DemoEx_AddPort(wadtbl_t* wadtbl) {
   AddPWADTableLump(wadtbl, DEMOEX_PORTNAME_LUMPNAME,
                    (const byte*) PROJECT_STRING, strlen(PROJECT_STRING));
 }
+#endif
 
 static void PartitionDemo(const char* filename) {
   size_t file_size;

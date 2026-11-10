@@ -15,6 +15,20 @@ extern "C" {
 }
 
 int main(int argc, char** argv) {
+
+#ifdef _WIN32
+    // anchor working dir to folder with ldre executable
+    char exePath[MAX_PATH];
+    if (GetModuleFileNameA(NULL, exePath, MAX_PATH) > 0) {
+        char* lastSlash = strrchr(exePath, '\\');
+        if (!lastSlash) lastSlash = strrchr(exePath, '/');
+        if (lastSlash) {
+            *lastSlash = '\0';
+            SetCurrentDirectoryA(exePath);
+        }
+    }
+#endif
+
     // init doom
     xdre::init(argc, argv);
 
@@ -25,7 +39,7 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-    MainWindow mainWindow;
+    MainWindow mainWindow(argc, argv);
 
     int guiX = mainWindow.GetGuiPosX();
     int guiY = mainWindow.GetGuiPosY();
@@ -38,7 +52,7 @@ int main(int argc, char** argv) {
 
     // build gui window
     SDL_Window* guiWindow = SDL_CreateWindow(
-        "LDRE v0.3.1 beta",
+        "LDRE v0.4.0 beta",
         guiX,
         guiY,
         780,

@@ -72,16 +72,17 @@ cmake --build --preset %selpreset% --config Release
 
 if errorlevel 1 (
     echo.&echo [ERROR] Build failed.
+    pause
     exit /b 1
 )
 
 :: summary
 color A
-echo.&echo ==========================
-echo [SUCCESS] Build completed.
-echo Generated output:
+echo.&echo Generated output:
 dir /b /s "build\windows-clang\*.exe" 2>nul
 dir /b /s "build\windows-clang\*.wad" 2>nul
+echo.&echo ==========================
+echo [SUCCESS] Build completed.
 echo ==========================
 
 pause

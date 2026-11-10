@@ -47,6 +47,7 @@
 #include "dsda/save.h"
 #include "dsda/settings.h"
 #include "dsda/time.h"
+#include "dsda/brute_force.h"
 
 #include "key_frame.h"
 
@@ -304,7 +305,9 @@ void dsda_RestoreKeyFrame(dsda_key_frame_t* key_frame, dboolean skip_wipe) {
 
   dsda_ResolveParentKF(key_frame);
 
-  doom_printf("Restored key frame");
+  if (!dsda_BruteForce()) {
+    doom_printf("Restored key frame");
+  }
 }
 
 void dsda_StoreTempKeyFrame(void) {

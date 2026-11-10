@@ -8,6 +8,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #endif
 
 #include <fstream>
@@ -15,6 +16,199 @@
 #include <algorithm>
 #include <cstring>
 #include <cctype>
+#include <vector>
+
+// bruteforce temporary saves
+static std::string GetExeDirectory() {
+#ifdef _WIN32
+    char path[MAX_PATH] = "";
+    if (GetModuleFileNameA(NULL, path, MAX_PATH) > 0) {
+        char* lastSlash = strrchr(path, '\\');
+        if (!lastSlash) lastSlash = strrchr(path, '/');
+        if (lastSlash) {
+            *(lastSlash + 1) = '\0';
+            return std::string(path);
+        }
+    }
+#endif
+    return "";
+}
+
+static std::string GetBFDirectory() {
+    std::string base = GetExeDirectory();
+    return base.empty() ? "bf" : (base + "bf");
+}
+
+static std::string GetBFBackupDirectory() {
+    std::string base = GetExeDirectory();
+    return base.empty() ? "bf_backup" : (base + "bf_backup");
+}
+
+// ensure dir exists
+static void Win32_CreateDirectory(const std::string& path) {
+#ifdef _WIN32
+    CreateDirectoryA(path.c_str(), NULL);
+#endif
+}
+
+// recursively erase dir contents with lingering process handles in mind
+static bool Win32_DeleteDirectoryInternal(const std::string& path) {
+#ifdef _WIN32
+    std::string searchPath = path + "\\*.*";
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(searchPath.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return false;
+
+    bool allDeleted = true;
+    do {
+        if (strcmp(fd.cFileName, ".") != 0 && strcmp(fd.cFileName, "..") != 0) {
+            std::string itemPath = path + "\\" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                if (!Win32_DeleteDirectoryInternal(itemPath)) {
+                    allDeleted = false;
+                }
+            } else {
+                SetFileAttributesA(itemPath.c_str(), FILE_ATTRIBUTE_NORMAL);
+
+                // retry loop for locked files
+                bool deleted = false;
+                for (int attempt = 0; attempt < 10; ++attempt) {
+                    if (DeleteFileA(itemPath.c_str())) {
+                        deleted = true;
+                        break;
+                    }
+                    Sleep(50);
+                }
+                if (!deleted) allDeleted = false;
+            }
+        }
+    } while (FindNextFileA(hFind, &fd));
+    FindClose(hFind);
+
+    if (allDeleted) {
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            if (RemoveDirectoryA(path.c_str())) return true;
+            Sleep(50);
+        }
+    }
+    return false;
+#else
+    return false;
+#endif
+}
+
+static void Win32_DeleteDirectory(const std::string& path) {
+    Win32_DeleteDirectoryInternal(path);
+}
+
+// bruteforce iwad/pwad stuff
+static bool FileExists(const std::string& path) {
+    DWORD attr = GetFileAttributesA(path.c_str());
+    return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+static bool HasExtension(const std::string& path, const std::string& ext) {
+    if (path.length() < ext.length()) return false;
+    std::string sub = path.substr(path.length() - ext.length());
+    for (size_t i = 0; i < sub.length(); ++i) sub[i] = (char)tolower((unsigned char)sub[i]);
+    return sub == ext;
+}
+
+void MainWindow::DetectStartupWads(int argc, char** argv) {
+    if (argc <= 1 || !argv) return;
+
+    std::string detectedIwad = "";
+    std::vector<std::string> detectedPwads;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        // explicit -iwad flag
+        if (arg == "-iwad" && i + 1 < argc) {
+            detectedIwad = argv[++i];
+            continue;
+        }
+
+        // explicit -file flag (1+ arguments)
+        if (arg == "-file") {
+            while (i + 1 < argc && argv[i + 1][0] != '-') {
+                detectedPwads.push_back(argv[++i]);
+            }
+            continue;
+        }
+
+        // drag and drop into exe, probably fails right now
+        if (arg[0] != '-') {
+            if (HasExtension(arg, ".wad") || HasExtension(arg, ".deh") || HasExtension(arg, ".bex")) {
+                // If it looks like a standard IWAD name and we have no IWAD yet, treat as IWAD
+                std::string lowerArg = arg;
+                for (char& c : lowerArg) c = (char)tolower((unsigned char)c);
+                if (detectedIwad.empty() && 
+                   (lowerArg.find("doom2.wad") != std::string::npos ||
+                    lowerArg.find("doom.wad") != std::string::npos ||
+                    lowerArg.find("plutonia.wad") != std::string::npos ||
+                    lowerArg.find("tnt.wad") != std::string::npos)) {
+                    detectedIwad = arg;
+                } else {
+                    detectedPwads.push_back(arg);
+                }
+            }
+        }
+    }
+
+    // fallback search if nothing provided, probably fails right now
+    if (detectedIwad.empty()) {
+        const char* commonIwads[] = {
+            "doom2.wad", "plutonia.wad", "tnt.wad", "doom.wad", "doom1.wad"
+        };
+        std::string exeDir = GetExeDirectory();
+
+        for (const char* name : commonIwads) {
+            std::string checkPath = exeDir + name;
+            if (FileExists(checkPath)) {
+                detectedIwad = checkPath;
+                break;
+            }
+            if (FileExists(name)) {
+                detectedIwad = name;
+                break;
+            }
+        }
+
+        // check DOOMWADDIR if present, probably fails right now
+        if (detectedIwad.empty()) {
+            char envBuf[MAX_PATH];
+            DWORD res = GetEnvironmentVariableA("DOOMWADDIR", envBuf, MAX_PATH);
+            if (res > 0 && res < MAX_PATH) {
+                std::string envDir = envBuf;
+                if (!envDir.empty() && envDir.back() != '\\' && envDir.back() != '/') envDir += "\\";
+                for (const char* name : commonIwads) {
+                    if (FileExists(envDir + name)) {
+                        detectedIwad = envDir + name;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // populate brs input buffers if found
+    if (!detectedIwad.empty()) {
+        strncpy(m_brsIwadPath, detectedIwad.c_str(), sizeof(m_brsIwadPath) - 1);
+        m_brsIwadPath[sizeof(m_brsIwadPath) - 1] = '\0';
+    }
+
+    if (!detectedPwads.empty()) {
+        std::string pwadCombined = "";
+        for (size_t p = 0; p < detectedPwads.size(); ++p) {
+            // Quote paths in case they contain spaces
+            pwadCombined += "\"" + detectedPwads[p] + "\"";
+            if (p + 1 < detectedPwads.size()) pwadCombined += " ";
+        }
+        strncpy(m_brsPwadPath, pwadCombined.c_str(), sizeof(m_brsPwadPath) - 1);
+        m_brsPwadPath[sizeof(m_brsPwadPath) - 1] = '\0';
+    }
+}
 
 // ini functions
 static std::unordered_map<std::string, std::string> s_iniData;
@@ -66,37 +260,10 @@ static const char* s_complevelNames[] = {
     "21 - MBF21"
 };
 
-// bruteforce parser
-static std::vector<signed char> ParseCmds(const std::string& str, bool parseAsUnsigned = false) {
-    long limitMax = parseAsUnsigned ? 255 : 127;
-    long limitMin = parseAsUnsigned ? 0 : -128;
-    std::vector<signed char> ret;
-
-    std::stringstream ss(str);
-    std::string item;
-    while (std::getline(ss, item, ',')) {
-        if (item.empty()) continue;
-        auto colon = item.find(':');
-        if (colon == std::string::npos) {
-            long val = std::stol(item);
-            if (val >= limitMin && val <= limitMax) ret.push_back((signed char)val);
-        } else {
-            long start = std::stol(item.substr(0, colon));
-            long end = std::stol(item.substr(colon + 1));
-            if (start <= end) {
-                for (long v = start; v <= end; ++v) ret.push_back((signed char)v);
-            } else {
-                for (long v = start; v >= end; --v) ret.push_back((signed char)v);
-            }
-        }
-    }
-    return ret;
-}
-
 // window core
-
-MainWindow::MainWindow() {
+MainWindow::MainWindow(int argc, char** argv) {
     Init();
+    DetectStartupWads(argc, argv);
 }
 
 MainWindow::~MainWindow() {
@@ -114,6 +281,12 @@ void MainWindow::Init() {
 
     if (xdre::getBlood() != m_bloodEnabled) {
         xdre::toggleBlood();
+    }
+
+    // default to hardware if nothing found in ini
+    if (m_brsThreadGoal <= 0) {
+        unsigned int hw = std::thread::hardware_concurrency();
+        m_brsThreadGoal = (hw > 0) ? static_cast<int>(hw) : 8;
     }
 }
 
@@ -196,7 +369,8 @@ void MainWindow::SetKeys() {
 }
 
 void MainWindow::LoadConfig() {
-    LoadIni("xdre.ini");
+    std::string iniPath = GetExeDirectory() + "xdre.ini";
+    LoadIni(iniPath);
 
     const char* keyNames[] = {
         "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
@@ -225,6 +399,8 @@ void MainWindow::LoadConfig() {
     m_lastDirectory = IniRead("LastDirectory", ".");
     m_bloodEnabled = (std::stoi(IniRead("Blood", "0")) != 0);
 	m_invertTicScrub = (std::stoi(IniRead("InvertTicScrub", "1")) != 0);
+	m_brsAutoLoadResult = (std::stoi(IniRead("BRSAutoLoadResult", "1")) != 0);
+	m_brsThreadGoal = std::stoi(IniRead("BRSThreadGoal", "0"));
 	
     IniWrite("Blood", m_bloodEnabled ? "1" : "0");
 	
@@ -248,13 +424,16 @@ void MainWindow::WriteConfig() {
     IniWrite("LastDirectory", m_lastDirectory);
     IniWrite("Blood", m_bloodEnabled ? "1" : "0");
 	IniWrite("InvertTicScrub", m_invertTicScrub ? "1" : "0");
+	IniWrite("BRSAutoLoadResult", m_brsAutoLoadResult ? "1" : "0");
+	IniWrite("BRSThreadGoal", std::to_string(m_brsThreadGoal));
 	
 	IniWrite("GuiWindowX", std::to_string(m_guiPosX));
     IniWrite("GuiWindowY", std::to_string(m_guiPosY));
     IniWrite("DoomWindowX", std::to_string(m_doomPosX));
     IniWrite("DoomWindowY", std::to_string(m_doomPosY));
 
-    SaveIni("xdre.ini");
+    std::string iniPath = GetExeDirectory() + "xdre.ini";
+    SaveIni(iniPath);
 }
 
 void MainWindow::DoInput(XCmd cmd, unsigned int val) {
@@ -278,10 +457,10 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::Load:          LoadReplayFile();              break;
         case XCmd::Save:          SaveReplayFile();              break;
         case XCmd::Exit:          RequestExit();                 break;
-        case XCmd::RunBwd:        xdre::run(-static_cast<signed char>(std::abs((long)(int)val))); break;
-        case XCmd::RunFwd:        xdre::run(static_cast<signed char>((long)(int)val));            break;
-        case XCmd::StrafeLeft:    xdre::strafe(-static_cast<signed char>(std::abs((long)(int)val))); break;
-        case XCmd::StrafeRight:   xdre::strafe(static_cast<signed char>((long)(int)val));         break;
+        case XCmd::RunBwd:  xdre::run(static_cast<signed char>(-std::abs(static_cast<int>(val)))); break;
+        case XCmd::RunFwd:  xdre::run(static_cast<signed char>(val)); break;
+        case XCmd::StrafeLeft:  xdre::strafe(static_cast<signed char>(-std::abs(static_cast<int>(val)))); break;
+        case XCmd::StrafeRight: xdre::strafe(static_cast<signed char>(val)); break;
         case XCmd::TurnLeft:      xdre::turn(static_cast<signed short>((long)(int)val));          break;
         case XCmd::TurnRight:     xdre::turn(-static_cast<signed short>(std::abs((long)(int)val))); break;
         case XCmd::Weapon:        xdre::changeWeapon(static_cast<char>(val));   break;
@@ -334,6 +513,24 @@ void MainWindow::ProcessInputField(const char* inputStr) {
 }
 
 void MainWindow::Render() {
+	// check if background worker queued a winning demo reload
+    if (m_brsPendingReload.load()) {
+        m_brsPendingReload = false;
+        FILE* f = std::fopen(m_brsPendingReloadPath.c_str(), "rb");
+        if (f) {
+            xdre::load(f);
+            std::fclose(f);
+
+            // seek to original tic
+            int currentTic = static_cast<int>(xdre::getCurrentTic());
+            int maxListIndex = static_cast<int>(xdre::getTiclistSize()) - 1;
+            int targetTic = (std::min)(m_brsInitialTic, maxListIndex);
+            if (targetTic >= 0 && targetTic != currentTic) {
+                xdre::seekDemo(targetTic - currentTic);
+            }
+        }
+    }
+	
     // fill the window with standard docking flags
     ImGuiWindowFlags windowFlags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar | 
                                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | 
@@ -358,7 +555,7 @@ void MainWindow::Render() {
     RenderHeaderDialog();
     RenderKeysDialog();
 	RenderExitDialog();
-    RenderBruteForceDialog();
+    RenderBRSDialog();
 	RenderOptionsDialog();
 	
 	ImGui::End();
@@ -375,9 +572,18 @@ void MainWindow::RenderMenuBar() {
         }
 
         if (ImGui::BeginMenu("Tools")) {
-            if (ImGui::MenuItem("Brute force - Standard...")) {
-                m_checkTic = xdre::getCurrentTic();
-                m_showBruteDialog = true;
+            if (ImGui::MenuItem("Brute-force...")) {
+                m_brsInitialTic = static_cast<int>(xdre::getCurrentTic());
+                // temporary demo
+                std::string tempDemo = GetExeDirectory() + "brs_temp_input.lmp";
+                FILE* f = std::fopen(tempDemo.c_str(), "wb");
+                if (f) {
+                    xdre::save(f);
+                    std::fclose(f);
+                    std::strncpy(m_brsDemoPath, tempDemo.c_str(), sizeof(m_brsDemoPath) - 1);
+                    m_brsDemoPath[sizeof(m_brsDemoPath) - 1] = '\0';
+                }
+                m_showBRSDialog = true;
             }
             if (ImGui::MenuItem("Edit Header...")) {
                 xdre::getOptions(m_headerOptions);
@@ -397,6 +603,7 @@ void MainWindow::RenderMenuBar() {
 			if (ImGui::MenuItem("Options...")) {
                 m_bloodEditBuffer = xdre::getBlood();
 				m_invertTicScrubEditBuffer = m_invertTicScrub;
+				m_brsAutoLoadResultEditBuffer = m_brsAutoLoadResult;
                 m_showOptionsDialog = true;
             }
 			
@@ -1141,11 +1348,13 @@ void MainWindow::RenderOptionsDialog() {
 
         ImGui::Checkbox("Palette stuff (blood/pickups)", &m_bloodEditBuffer);
         ImGui::Checkbox("Direct scrollwheel tic switching (hold RMB to scroll list)", &m_invertTicScrubEditBuffer);
+        ImGui::Checkbox("Auto-load winning brute-force demo into editor", &m_brsAutoLoadResultEditBuffer);
 
         ImGui::Separator();
         if (ImGui::Button("Save & Apply", ImVec2(120, 0))) {
             m_bloodEnabled = m_bloodEditBuffer;
             m_invertTicScrub = m_invertTicScrubEditBuffer;
+            m_brsAutoLoadResult = m_brsAutoLoadResultEditBuffer;
 
             if (xdre::getBlood() != m_bloodEnabled) {
                 xdre::toggleBlood();
@@ -1163,225 +1372,957 @@ void MainWindow::RenderOptionsDialog() {
     }
 }
 
-void MainWindow::RenderBruteForceDialog() {
-    if (m_showBruteDialog) {
-        ImGui::OpenPopup("Brute Force - Standard");
-        m_showBruteDialog = false;
+static int BRS_GetComplevel(const char* demoPath) {
+    int options[28] = {0};
+    xdre::getOptions(options);
+    if (options[0] > 0) return options[0];
+
+    // fallback: parse demo header directly
+    std::ifstream file(demoPath, std::ios::binary);
+    if (!file) return 2; // default to cl2
+
+    char b = 0;
+    if (file.get(b)) {
+        unsigned char fb = static_cast<unsigned char>(b);
+        if (fb == 255) { // UMAPINFO header present (27 bytes)
+            file.seekg(26, std::ios::cur);
+            if (file.get(b)) {
+                unsigned char cl = static_cast<unsigned char>(b);
+                if (cl == 109) return 2;
+                if (cl == 202) return 9;
+                if (cl == 203) return 11;
+            }
+        } else if (fb == 109) return 2;
+        else if (fb == 202) return 9;
+        else if (fb == 203) return 11;
+    }
+    return 2;
+}
+
+void MainWindow::CleanupBRSArtifacts(int winningIndex) {
+    {
+        std::lock_guard<std::mutex> lock(m_brsWorkerMutex);
     }
 
-    if (m_bruteFinishedNotification) {
-        m_bruteFinishedNotification = false;
-        ImGui::OpenPopup("Brute Result");
+    std::string bfDir = GetBFDirectory();
+    std::string backupDir = GetBFBackupDirectory();
+
+    // ensure backup dir exists
+    Win32_CreateDirectory(backupDir);
+
+    // if a winner's found, preserve it in bf_backup
+    if (winningIndex >= 0) {
+        std::string srcDemo = bfDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
+        std::string dstDemo = backupDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
+
+        // give filesystem a brief window to flush handles
+        for (int retry = 0; retry < 5; ++retry) {
+            if (CopyFileA(srcDemo.c_str(), dstDemo.c_str(), FALSE)) {
+                break;
+            }
+            Sleep(20);
+        }
     }
 
-    if (ImGui::BeginPopupModal("Brute Result", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (m_bruteSuccess) {
-            ImGui::Text("Found it! Replay positioned at desired tic.");
+    // erase temp folder
+    Win32_DeleteDirectory(bfDir);
+}
+
+static std::pair<int, int> BRS_ParseRange(const std::string& str, int minLimit, int maxLimit) {
+    if (str.empty()) return {0, 0};
+    auto colon = str.find(':');
+    int low = 0, high = 0;
+    try {
+        if (colon == std::string::npos) {
+            low = high = std::stoi(str);
         } else {
-            ImGui::Text("Whole range examined. No cigar.");
+            low = std::stoi(str.substr(0, colon));
+            high = std::stoi(str.substr(colon + 1));
         }
-        if (ImGui::Button("OK", ImVec2(100, 0))) {
-            ImGui::CloseCurrentPopup();
+    } catch (...) {
+        return {0, 0};
+    }
+    low = (std::max)(minLimit, (std::min)(maxLimit, low));
+    high = (std::max)(minLimit, (std::min)(maxLimit, high));
+    return {low, high};
+}
+
+// generate valid integer sizes for search dimensions
+static std::vector<int> BRS_GetFactors(int rangeSize, int maxThreads) {
+    std::vector<int> factors;
+    if (rangeSize < 2) return factors;
+    int limit = (std::min)(rangeSize, maxThreads);
+    for (int i = 2; i <= limit; ++i) factors.push_back(i);
+    return factors;
+}
+
+// factor combination backtracking
+static bool BRS_Backtrack(const std::vector<std::vector<int>>& input,
+                          std::vector<std::pair<int, int>>& current,
+                          int index, int product, int target,
+                          std::vector<std::pair<int, int>>& out) {
+    if (product == target) {
+        out = current;
+        return true;
+    }
+    if (index >= (int)input.size() || product > target || target % product != 0)
+        return false;
+
+    if (BRS_Backtrack(input, current, index + 1, product, target, out))
+        return true;
+
+    for (int factor : input[index]) {
+        if (product * factor <= target && (target % (product * factor) == 0)) {
+            current.push_back({factor, index});
+            if (BRS_Backtrack(input, current, index + 1, product * factor, target, out))
+                return true;
+            current.pop_back();
         }
-        ImGui::EndPopup();
+    }
+    return false;
+}
+
+void MainWindow::StartBRSSearch() {
+    if (m_brsIsRunning) return;
+    if (m_brsTics.empty()) return;
+
+    if (m_brsSupervisorThread.joinable())
+        m_brsSupervisorThread.join();
+
+    m_brsAbortRequested = false;
+    m_brsIsRunning = true;
+    m_brsCompletedTasks = 0;
+    m_brsWinningTaskIndex = -1;
+    m_brsStatusMessage = "Partitioning ranges...";
+    m_brsResultDetails = "";
+
+    // prepare range factors
+    for (auto& tic : m_brsTics) {
+        auto r = BRS_ParseRange(tic.runStr, -50, 50);
+        auto s = BRS_ParseRange(tic.strafeStr, -50, 50);
+        auto t = BRS_ParseRange(tic.turnStr, -128, 127);
+        tic.runSize = std::abs(r.first - r.second) + 1;
+        tic.strafeSize = std::abs(s.first - s.second) + 1;
+        tic.turnSize = std::abs(t.first - t.second) + 1;
+        tic.runFactors = BRS_GetFactors(tic.runSize, m_brsThreadGoal * 4);
+        tic.strafeFactors = BRS_GetFactors(tic.strafeSize, m_brsThreadGoal * 4);
+        tic.turnFactors = BRS_GetFactors(tic.turnSize, m_brsThreadGoal * 4);
     }
 
-    if (ImGui::BeginPopupModal("Brute Force - Standard", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Columns(2, "BruteCols", false);
-        ImGui::SetColumnWidth(0, 240.0f);
+    m_brsSupervisorThread = std::thread(&MainWindow::BRSWorkerThread, this);
+}
 
-        ImGui::Text("Tics to Brute Force:");
+void MainWindow::AbortBRSSearch() {
+    m_brsAbortRequested = true;
+    m_brsStatusMessage = "Aborting search...";
+}
+
+// produce sub-slices for each dimension using integer division and remainder distribution
+static std::vector<std::vector<std::string>> BRS_ProduceRangeIncrements(
+    const std::vector<std::pair<int, int>>& winningPairs,
+    const std::vector<BRSTicItem>& tics) {
+
+    std::vector<int> lowerVals, rangeSizes;
+    for (const auto& tic : tics) {
+        auto r = BRS_ParseRange(tic.runStr, -128, 127);
+        auto s = BRS_ParseRange(tic.strafeStr, -128, 127);
+        auto t = BRS_ParseRange(tic.turnStr, -128, 127);
+
+        lowerVals.push_back((std::min)(r.first, r.second));
+        lowerVals.push_back((std::min)(s.first, s.second));
+        lowerVals.push_back((std::min)(t.first, t.second));
+
+        rangeSizes.push_back(std::abs(r.first - r.second) + 1);
+        rangeSizes.push_back(std::abs(s.first - s.second) + 1);
+        rangeSizes.push_back(std::abs(t.first - t.second) + 1);
+    }
+
+    std::vector<int> splitFactors(rangeSizes.size(), 1);
+    for (const auto& pair : winningPairs) {
+        if (pair.second >= 0 && pair.second < (int)splitFactors.size())
+            splitFactors[pair.second] = pair.first;
+    }
+
+    std::vector<std::vector<std::string>> increments(rangeSizes.size());
+    for (size_t i = 0; i < rangeSizes.size(); ++i) {
+        int factor = splitFactors[i];
+        int rSize  = rangeSizes[i];
+        int lVal   = lowerVals[i];
+
+        if (factor > 1) {
+            int q = rSize / factor;
+            int rem = rSize % factor;
+            int curr = lVal;
+
+            for (int j = 0; j < factor; ++j) {
+                int size = (j < rem) ? (q + 1) : q;
+                int startVal = curr;
+                int endVal   = curr + size - 1;
+                increments[i].push_back(std::to_string(startVal) + ":" + std::to_string(endVal));
+                curr += size;
+            }
+        } else {
+            increments[i].push_back(std::to_string(lVal) + ":" + std::to_string(lVal + rSize - 1));
+        }
+    }
+
+    return increments;
+}
+
+// generate unique combination array for each task
+static std::vector<std::vector<std::string>> BRS_ProduceFinalCombinations(
+    const std::vector<std::vector<std::string>>& increments,
+    int taskCount) {
+
+    std::vector<std::vector<std::string>> finalCombinations;
+    std::vector<int> indices(increments.size(), 0);
+
+    for (int i = 0; i < taskCount; ++i) {
+        std::vector<std::string> combo;
+        for (size_t j = 0; j < increments.size(); ++j) {
+            combo.push_back(increments[j][indices[j]]);
+        }
+        finalCombinations.push_back(combo);
+
+        for (size_t j = 0; j < increments.size(); ++j) {
+            indices[j]++;
+            if (indices[j] < (int)increments[j].size())
+                break;
+            indices[j] = 0;
+        }
+    }
+
+    return finalCombinations;
+}
+
+void MainWindow::BRSWorkerThread() {
+    // force headless sdl drivers for dsda processes
+    SetEnvironmentVariableA("SDL_VIDEODRIVER", "dummy");
+    SetEnvironmentVariableA("SDL_AUDIODRIVER", "dummy");
+
+    // earliest tic first
+    auto ticsAscending = m_brsTics;
+    std::sort(ticsAscending.begin(), ticsAscending.end(), [](const BRSTicItem& a, const BRSTicItem& b) {
+        return a.ticNumber < b.ticNumber;
+    });
+
+    // factor tree order, run/strafe/turn
+    std::vector<std::vector<int>> factorTree;
+    for (const auto& tic : ticsAscending) {
+        factorTree.push_back(tic.runFactors);
+        factorTree.push_back(tic.strafeFactors);
+        factorTree.push_back(tic.turnFactors);
+    }
+
+    int numWorkers = (std::max)(m_brsThreadGoal, 1);
+
+    // combination calculator
+    long long totalCombinations = 1;
+    for (const auto& tic : ticsAscending) {
+    totalCombinations *= (std::max)(1, tic.runSize);
+    totalCombinations *= (std::max)(1, tic.strafeSize);
+    totalCombinations *= (std::max)(1, tic.turnSize);
+    }
+
+    int targetMultiplier = 16;
+    if (totalCombinations < static_cast<long long>(numWorkers) * targetMultiplier) {
+    targetMultiplier = (std::max)(1, static_cast<int>(totalCombinations / numWorkers));
+    }
+    int desiredTarget = numWorkers * targetMultiplier;
+
+    int bestFoundSlices = 1;
+    std::vector<std::pair<int, int>> cur, winningPairs;
+
+    bool matchFound = false;
+    for (int mult = targetMultiplier; mult >= 1; --mult) {
+        int baseCand = numWorkers * mult;
+        for (int delta = 0; delta <= 2; ++delta) {
+            int testSlices = baseCand - delta;
+            if (testSlices < 1) continue;
+
+            cur.clear();
+            if (BRS_Backtrack(factorTree, cur, 0, 1, testSlices, winningPairs)) {
+                bestFoundSlices = testSlices;
+                matchFound = true;
+                break;
+            }
+        }
+        if (matchFound) break;
+    }
+
+    if (!matchFound) {
+        // controlled step-down with <= 2 max
+        for (int t = desiredTarget; t >= 1; --t) {
+            int rem = t % numWorkers;
+            if (rem == 0 || rem <= 2 || (numWorkers - rem) <= 2) {
+                cur.clear();
+                if (BRS_Backtrack(factorTree, cur, 0, 1, t, winningPairs)) {
+                    bestFoundSlices = t;
+                    break;
+                }
+            }
+        }
+    }
+
+    auto increments = BRS_ProduceRangeIncrements(winningPairs, ticsAscending);
+    auto finalCombinations = BRS_ProduceFinalCombinations(increments, bestFoundSlices);
+
+    int complevel = BRS_GetComplevel(m_brsDemoPath);
+    int baseTic   = ticsAscending.empty() ? 0 : ticsAscending.front().ticNumber;
+    int endTic    = ticsAscending.empty() ? 0 : ticsAscending.back().ticNumber;
+
+    std::string bfDir = GetBFDirectory();
+    Win32_CreateDirectory(bfDir);
+
+    int actualWorkers = (std::min)(numWorkers, (int)finalCombinations.size());
+
+    // create queue files in bf
+    std::vector<std::ofstream> queueFiles(actualWorkers);
+    for (int w = 0; w < actualWorkers; ++w) {
+        std::string qPath = bfDir + "/brs_queue_" + std::to_string(w) + ".txt";
+        queueFiles[w].open(qPath, std::ios::out | std::ios::trunc);
+    }
+
+    // output slices matching frame: offset run strafe turn flags weapon
+    for (size_t i = 0; i < finalCombinations.size(); ++i) {
+        int targetWorker = static_cast<int>(i % actualWorkers);
+        std::string sliceLine = "";
+        size_t comboIdx = 0;
+
+        for (size_t f = 0; f < ticsAscending.size(); ++f) {
+            int frameOffset = ticsAscending[f].ticNumber - baseTic;
+            std::string runSlice    = finalCombinations[i][comboIdx++];
+            std::string strafeSlice = finalCombinations[i][comboIdx++];
+            std::string turnSlice   = finalCombinations[i][comboIdx++];
+
+            sliceLine += "bf.frame " + std::to_string(frameOffset) + " "
+                      + runSlice + " " + strafeSlice + " " + turnSlice;
+
+            // combine into single token
+            std::string flags = "";
+            if (ticsAscending[f].fire == 1) flags += "a";
+            if (ticsAscending[f].use == 1)  flags += "u";
+
+            if (!flags.empty()) {
+                sliceLine += " " + flags;
+            }
+
+            if (ticsAscending[f].weapon > 0) {
+                sliceLine += " c" + std::to_string(ticsAscending[f].weapon);
+            }
+
+            // only append semicolon if another frame following in this line
+            if (f + 1 < ticsAscending.size()) {
+                sliceLine += "; ";
+            }
+        }
+        queueFiles[targetWorker] << sliceLine << "\n";
+    }
+
+    for (int w = 0; w < actualWorkers; ++w) {
+        queueFiles[w].close();
+    }
+
+    // build parameter string
+    std::vector<std::string> condTokens;
+    auto AppendCond = [&](const BRSCheckItem& c, const char* name) {
+        if (!c.active) return;
+        const char* opStr = "==";
+        if (c.op == 1) opStr = "!=";
+        else if (c.op == 2) opStr = ">=";
+        else if (c.op == 3) opStr = ">";
+        else if (c.op == 4) opStr = "<=";
+        else if (c.op == 5) opStr = "<";
+        else if (c.op == 6) opStr = "min";
+        else if (c.op == 7) opStr = "max";
+
+        if (c.op == 6 || c.op == 7) {
+            condTokens.push_back(std::string(name) + " " + opStr);
+        } else {
+            condTokens.push_back(std::string(name) + " " + opStr + " " + c.val);
+        }
+    };
+
+    // condition build
+    AppendCond(m_chkSpeed, "spd");
+    AppendCond(m_chkDamage, "dmg");
+    AppendCond(m_chkX, "x");
+    AppendCond(m_chkY, "y");
+    AppendCond(m_chkZ, "z");
+    AppendCond(m_chkMomX, "vx");
+    AppendCond(m_chkMomY, "vy");
+	AppendCond(m_chkUse, "use");
+
+    // append linedef condition
+    if (m_chkLinedef.active && strlen(m_chkLinedef.val) > 0) {
+        std::string lType = (m_chkLinedefType == 0) ? "act " : "skip ";
+        condTokens.push_back(lType + std::string(m_chkLinedef.val));
+    }
+
+    std::string condStr = "";
+    for (size_t c = 0; c < condTokens.size(); ++c) {
+        condStr += condTokens[c];
+        if (c + 1 < condTokens.size()) condStr += ", ";
+    }
+
+    // safety fallback if ""
+    if (condStr.empty()) {
+        // if a linedef was typed in tracer panel, assume we want activation
+        int trackedLine = -1;
+        try { trackedLine = std::stoi(m_linedefInput); } catch (...) {}
+        if (trackedLine > 0) {
+            condStr = "act " + std::to_string(trackedLine);
+        } else {
+            // otherwise provide max speed
+            condStr = "spd max";
+        }
+    }
+
+    // assemble task cmds
+    std::vector<BRSTask> taskQueue;
+    for (int w = 0; w < actualWorkers; ++w) {
+        // resolve absolute path
+        std::string exePath = m_brsExePath;
+        if (exePath.find(":\\") == std::string::npos && exePath.find(":/") == std::string::npos) {
+            exePath = GetExeDirectory() + exePath;
+        }
+
+        std::string cmd = "\"" + exePath + "\" ";
+
+        if (strlen(m_brsIwadPath) > 0) {
+            std::string iwad = m_brsIwadPath;
+            if (iwad.find(":\\") == std::string::npos && iwad.find(":/") == std::string::npos)
+                iwad = GetExeDirectory() + iwad;
+            cmd += "-iwad \"" + iwad + "\" ";
+        }
+        if (strlen(m_brsPwadPath) > 0) {
+            std::string pwadStr = m_brsPwadPath;
+            // pass directly after -file
+            if (pwadStr.front() == '"' || pwadStr.find(' ') != std::string::npos) {
+                cmd += "-file " + pwadStr + " ";
+            } else {
+                if (pwadStr.find(":\\") == std::string::npos && pwadStr.find(":/") == std::string::npos)
+                    pwadStr = GetExeDirectory() + pwadStr;
+                cmd += "-file \"" + pwadStr + "\" ";
+            }
+        }
+        if (strlen(m_brsExtraArgs) > 0) cmd += std::string(m_brsExtraArgs) + " ";
+
+        // outputdemo and queue will be local names
+        cmd += "-recordfromto \"" + std::string(m_brsDemoPath) + "\" \"outputdemo" + std::to_string(w) + ".lmp\" ";
+        cmd += "-skiptic " + std::to_string((std::max)(0, baseTic - 1)) + " ";
+
+        if (std::string(m_brsExtraArgs).find("-complevel") == std::string::npos &&
+            std::string(m_brsExtraArgs).find("-cl") == std::string::npos) {
+            cmd += "-complevel " + std::to_string(complevel) + " ";
+        }
+
+        cmd += "-bf_queue \"brs_queue_" + std::to_string(w) + ".txt\" ";
+        cmd += "-quit_after_brute_force -build -command \"demo.join; ";
+
+        if (m_brsNomo) cmd += "bf.nomo; ";
+
+        if (m_brsPreserveUndefined) {
+            for (int t = baseTic; t < endTic; ++t) {
+                bool isBruted = false;
+                for (const auto& item : ticsAscending) {
+                    if (item.ticNumber == t) { isBruted = true; break; }
+                }
+                if (!isBruted) cmd += "bf.keep " + std::to_string(t - baseTic) + "; ";
+            }
+        }
+
+        int totalDepth = (endTic - baseTic) + 1;
+        cmd += "bf.start " + std::to_string(totalDepth) + " " + condStr + "\"";
+
+        taskQueue.push_back({w, cmd});
+    }
+
+    bool isMinSearch = false;
+    bool isMaxSearch = false;
+    for (const auto* item : { &m_chkSpeed, &m_chkDamage, &m_chkX, &m_chkY, &m_chkZ, &m_chkMomX, &m_chkMomY }) {
+        if (item->active) {
+            if (item->op == 6) isMinSearch = true;
+            if (item->op == 7) isMaxSearch = true;
+        }
+    }
+    bool isOptimization = (isMinSearch || isMaxSearch);
+
+    double bestTargetValue = isMinSearch ? (std::numeric_limits<double>::max)()
+                                         : -(std::numeric_limits<double>::max)();
+
+    m_brsTotalTasks = (int)taskQueue.size();
+    int concurrentLimit = (std::min)(actualWorkers, m_brsTotalTasks.load());
+    std::vector<BRSWorker> activeWorkers;
+
+    // supervise execution
+    while ((!taskQueue.empty() || !activeWorkers.empty()) && !m_brsAbortRequested) {
+        while ((int)activeWorkers.size() < concurrentLimit && !taskQueue.empty() && !m_brsAbortRequested) {
+            BRSTask task = taskQueue.back();
+            taskQueue.pop_back();
+
+            std::string logName = bfDir + "/process_output" + std::to_string(task.taskIndex) + ".txt";
+            SECURITY_ATTRIBUTES sa;
+            sa.nLength = sizeof(sa);
+            sa.bInheritHandle = TRUE;
+            sa.lpSecurityDescriptor = NULL;
+
+            HANDLE hLog = CreateFileA(logName.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+            STARTUPINFOA si;
+            PROCESS_INFORMATION pi;
+            ZeroMemory(&si, sizeof(si));
+            ZeroMemory(&pi, sizeof(pi));
+            si.cb = sizeof(si);
+            si.dwFlags |= STARTF_USESTDHANDLES;
+            si.hStdOutput = hLog;
+            si.hStdError = hLog;
+            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+
+            std::vector<char> cmdBuf(task.command.begin(), task.command.end());
+            cmdBuf.push_back('\0');
+
+            // pass bfDir.c_str() as lpCurrentDirectory so dsda runs inside bf
+            if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, bfDir.c_str(), &si, &pi)) {
+                activeWorkers.push_back({task.taskIndex, pi.hProcess, pi.hThread, pi.dwProcessId});
+            }
+            CloseHandle(hLog);
+        }
+
+        for (size_t i = 0; i < activeWorkers.size(); ) {
+            DWORD exitCode = 0;
+            if (GetExitCodeProcess(activeWorkers[i].hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
+                int taskIdx = activeWorkers[i].taskIndex;
+                CloseHandle(activeWorkers[i].hProcess);
+                CloseHandle(activeWorkers[i].hThread);
+                activeWorkers.erase(activeWorkers.begin() + i);
+                m_brsCompletedTasks++;
+
+                std::string logFile = bfDir + "/process_output" + std::to_string(taskIdx) + ".txt";
+                std::ifstream f(logFile);
+                std::string line;
+                bool taskSucceeded = false;
+                double taskBestVal = isMinSearch ? (std::numeric_limits<double>::max)()
+                                                 : -(std::numeric_limits<double>::max)();
+                bool foundCandidate = false;
+
+                while (std::getline(f, line)) {
+                    auto pos = line.find("New best:");
+                    if (pos != std::string::npos) {
+                        taskSucceeded = true;
+                        auto eqPos = line.find('=', pos);
+                        if (eqPos != std::string::npos) {
+                            try {
+                                double val = std::stod(line.substr(eqPos + 1));
+                                if (isMinSearch && val < taskBestVal) {
+                                    taskBestVal = val;
+                                    foundCandidate = true;
+                                } else if (isMaxSearch && val > taskBestVal) {
+                                    taskBestVal = val;
+                                    foundCandidate = true;
+                                }
+                            } catch (...) {}
+                        }
+                    } else if (line.find("complete (SUCCESS)") != std::string::npos) {
+                        taskSucceeded = true;
+                    }
+                }
+
+                if (isOptimization) {
+                    if (foundCandidate) {
+                        bool isNewGlobalBest = false;
+                        if (isMinSearch && taskBestVal < bestTargetValue) isNewGlobalBest = true;
+                        if (isMaxSearch && taskBestVal > bestTargetValue) isNewGlobalBest = true;
+
+                        if (isNewGlobalBest) {
+                            bestTargetValue = taskBestVal;
+                            m_brsWinningTaskIndex = taskIdx;
+                            m_brsResultDetails = "Best so far: " + std::to_string(bestTargetValue) + " (worker " + std::to_string(taskIdx) + ")\n";
+                        }
+                    }
+                } else {
+                    if (taskSucceeded && m_brsWinningTaskIndex < 0) {
+                        m_brsWinningTaskIndex = taskIdx;
+                        m_brsStatusMessage = "Target reached in worker " + std::to_string(taskIdx);
+
+                        // discard remaining tasks
+                        taskQueue.clear();
+
+                        // kill all remaining workers
+                        for (auto& w : activeWorkers) {
+                            TerminateProcess(w.hProcess, 0);
+                            WaitForSingleObject(w.hProcess, 500);
+                            CloseHandle(w.hProcess);
+                            CloseHandle(w.hThread);
+                        }
+                        activeWorkers.clear();
+
+                        // exit loop
+                        break;
+                    }
+                }
+            } else {
+                ++i;
+            }
+        }
+        
+        // break outer dispatch loop if match was found
+        if (!isOptimization && m_brsWinningTaskIndex >= 0) {
+            break;
+        }
+
+        Sleep(20);
+    }
+
+    // terminate and wait for all remaining workers to release file locks
+    for (auto& w : activeWorkers) {
+        TerminateProcess(w.hProcess, 0);
+        WaitForSingleObject(w.hProcess, 2000); // wait up to 2s for OS teardown
+        CloseHandle(w.hProcess);
+        CloseHandle(w.hThread);
+    }
+    activeWorkers.clear();
+
+    if (m_brsAbortRequested) {
+        CleanupBRSArtifacts(-1);
+        m_brsStatusMessage = "Search aborted by user.";
+    } else {
+        CleanupBRSArtifacts(m_brsWinningTaskIndex);
+        if (m_brsWinningTaskIndex >= 0) {
+            std::string finalDemoPath = GetBFBackupDirectory() + "\\outputdemo" + std::to_string(m_brsWinningTaskIndex) + ".lmp";
+            m_brsStatusMessage = "Search complete: solution found (copied to " + finalDemoPath + ").";
+
+            if (m_brsAutoLoadResult) {
+                m_brsPendingReloadPath = finalDemoPath;
+                m_brsPendingReload = true;
+            }
+        } else {
+            m_brsStatusMessage = "Search finished: no matching condition found.";
+        }
+    }
+
+    SetEnvironmentVariableA("SDL_VIDEODRIVER", NULL);
+    SetEnvironmentVariableA("SDL_AUDIODRIVER", NULL);
+
+    m_brsIsRunning = false;
+}
+
+static void BRS_CalcAutoRange(int centerVal, int rangeRadius, int minBound, int maxBound, char* outBuf, size_t bufSize) {
+    int fromVal = centerVal + rangeRadius;
+    int toVal = centerVal - rangeRadius;
+
+    // determine min/max
+    int high = (std::max)(fromVal, toVal);
+    int low  = (std::min)(fromVal, toVal);
+
+    int offset = 0;
+    if (high > maxBound) {
+        offset = high - maxBound;
+    } else if (low < minBound) {
+        offset = low - minBound;
+    }
+
+    fromVal -= offset;
+    toVal   -= offset;
+
+    // safety clamp range diameter
+    fromVal = (std::max)(minBound, (std::min)(maxBound, fromVal));
+    toVal   = (std::max)(minBound, (std::min)(maxBound, toVal));
+
+    snprintf(outBuf, bufSize, "%d:%d", fromVal, toVal);
+}
+
+void MainWindow::RenderBRSDialog() {
+    if (m_showBRSDialog) {
+        ImGui::OpenPopup("Brute-force");
+        m_showBRSDialog = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(780, 680), ImGuiCond_FirstUseEver);
+
+    if (ImGui::BeginPopupModal("Brute-force", nullptr, ImGuiWindowFlags_None)) {
+        
+        // top section
+        ImGui::Columns(2, "BRSTopSplit", true);
+        ImGui::SetColumnWidth(0, 380.0f);
+
+        // left column
+        ImGui::Text("Tics to Brute-force");
+        ImGui::Separator();
+
         if (ImGui::Button("Add Tic")) {
-            BruteItem item;
-            int nextTic = xdre::getCurrentTic() + static_cast<int>(m_bruteItems.size());
-            snprintf(item.ticStr, sizeof(item.ticStr), "%d", nextTic);
-            m_bruteItems.push_back(item);
-            m_selectedBruteItem = static_cast<int>(m_bruteItems.size()) - 1;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Remove") && m_selectedBruteItem >= 0 && m_selectedBruteItem < (int)m_bruteItems.size()) {
-            m_bruteItems.erase(m_bruteItems.begin() + m_selectedBruteItem);
-            if (m_selectedBruteItem >= (int)m_bruteItems.size()) m_selectedBruteItem = (int)m_bruteItems.size() - 1;
+            BRSTicItem item;
+
+            int startTic = static_cast<int>(xdre::getCurrentTic());
+            int maxTic = static_cast<int>(xdre::getTiclistSize()) - 1;
+            if (maxTic < 0) maxTic = 0;
+            startTic = (std::max)(0, (std::min)(startTic, maxTic));
+
+            if (m_brsTics.empty()) {
+                item.ticNumber = startTic;
+            } else {
+                int candidate = startTic;
+                for (; candidate >= 0; --candidate) {
+                    bool exists = false;
+                    for (const auto& t : m_brsTics) {
+                        if (t.ticNumber == candidate) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (!exists) break;
+                }
+
+                if (candidate < 0) {
+                    for (candidate = startTic + 1; candidate <= maxTic; ++candidate) {
+                        bool exists = false;
+                        for (const auto& t : m_brsTics) {
+                            if (t.ticNumber == candidate) {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists) break;
+                    }
+                }
+
+                item.ticNumber = (candidate >= 0 && candidate <= maxTic) ? candidate : 0;
+            }
+
+            m_brsTics.push_back(item);
+
+            std::sort(m_brsTics.begin(), m_brsTics.end(), [](const BRSTicItem& a, const BRSTicItem& b) {
+                return a.ticNumber > b.ticNumber;
+            });
+
+            for (int i = 0; i < static_cast<int>(m_brsTics.size()); ++i) {
+                if (m_brsTics[i].ticNumber == item.ticNumber) {
+                    m_selectedBRSTic = i;
+                    break;
+                }
+            }
         }
 
-        // tic item list
-        ImGui::BeginChild("BruteItemList", ImVec2(0, 140), true);
-        for (int i = 0; i < (int)m_bruteItems.size(); ++i) {
-            char lbl[32];
-            snprintf(lbl, sizeof(lbl), "Tic %s", m_bruteItems[i].ticStr);
-            if (ImGui::Selectable(lbl, m_selectedBruteItem == i)) {
-                m_selectedBruteItem = i;
+        ImGui::SameLine();
+        if (ImGui::Button("Remove") && m_selectedBRSTic >= 0 && m_selectedBRSTic < (int)m_brsTics.size()) {
+            m_brsTics.erase(m_brsTics.begin() + m_selectedBRSTic);
+            if (m_selectedBRSTic >= (int)m_brsTics.size()) m_selectedBRSTic = (int)m_brsTics.size() - 1;
+        }
+
+        // tic list
+        ImGui::BeginChild("BRSTicList", ImVec2(0, 115), true);
+        for (int i = 0; i < (int)m_brsTics.size(); ++i) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "Tic %d", m_brsTics[i].ticNumber);
+            if (ImGui::Selectable(buf, m_selectedBRSTic == i)) {
+                m_selectedBRSTic = i;
             }
         }
         ImGui::EndChild();
 
-        // selected tic config
-        if (m_selectedBruteItem >= 0 && m_selectedBruteItem < (int)m_bruteItems.size()) {
-            auto& item = m_bruteItems[m_selectedBruteItem];
-            ImGui::InputText("Tic", item.ticStr, sizeof(item.ticStr));
-            ImGui::InputText("Run (MB:MF)", item.runStr, sizeof(item.runStr));
-            ImGui::InputText("Strafe (SL:SR)", item.strafeStr, sizeof(item.strafeStr));
-            ImGui::InputText("Turn", item.turnStr, sizeof(item.turnStr));
+        // selected tic attributes
+        if (m_selectedBRSTic >= 0 && m_selectedBRSTic < (int)m_brsTics.size()) {
+            auto& tic = m_brsTics[m_selectedBRSTic];
 
-            const char* turnModes[] = { "Short", "Long" };
-            ImGui::Combo("Turn Mode", &item.turnOrAngle, turnModes, 2);
+            ImGui::Text("Tic Index:");
+            ImGui::SameLine(75.0f);
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::InputInt("##ticNumber", &tic.ticNumber);
 
-            const char* radioChoices[] = { "No", "Both", "Yes" };
-            ImGui::Combo("Fire", &item.fire, radioChoices, 3);
-            ImGui::Combo("Use", &item.use, radioChoices, 3);
+            // run and strafe
+            ImGui::Text("Run:");
+            ImGui::SameLine(50.0f);
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::InputText("##runStr", tic.runStr, sizeof(tic.runStr));
+
+            ImGui::SameLine(175.0f);
+            ImGui::Text("Strafe:");
+            ImGui::SameLine(230.0f);
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::InputText("##strafeStr", tic.strafeStr, sizeof(tic.strafeStr));
+
+            // turn
+            ImGui::Text("Turn:");
+            ImGui::SameLine(50.0f);
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::InputText("##turnStr", tic.turnStr, sizeof(tic.turnStr));
+
+            // fire and use
+            const char* triChoices[] = {"No", "Yes"};
+            ImGui::Text("Fire:");
+            ImGui::SameLine(50.0f);
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::Combo("##fire", &tic.fire, triChoices, 2);
+
+            ImGui::SameLine(175.0f);
+            ImGui::Text("Use:");
+            ImGui::SameLine(230.0f);
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::Combo("##use", &tic.use, triChoices, 2);
+        } else {
+            ImGui::TextDisabled("Select a tic above to configure its ranges.");
         }
 
-        ImGui::Separator();
-        const char* rangeSizes[] = { "1", "2", "3", "4", "5", "Max Range" };
-        ImGui::Combo("Range Size", &m_autoRangeChoice, rangeSizes, 6);
-        ImGui::Checkbox("Avoid Turbo (>50)", &m_avoidTurbo);
-
-        if (ImGui::Button("Auto Range Current Tics")) {
-            int rangeSize = m_autoRangeChoice + 1;
-            for (size_t i = 0; i < m_bruteItems.size(); ++i) {
-                int run = xdre::getCurrentRun(i, m_bruteItems.size());
-                int strafe = xdre::getCurrentStrafe(i, m_bruteItems.size());
-                int turn = xdre::getCurrentTurn(i, m_bruteItems.size());
-
-                snprintf(m_bruteItems[i].runStr, sizeof(m_bruteItems[i].runStr), "%d:%d", run - rangeSize, run + rangeSize);
-                snprintf(m_bruteItems[i].strafeStr, sizeof(m_bruteItems[i].strafeStr), "%d:%d", strafe - rangeSize, strafe + rangeSize);
-                snprintf(m_bruteItems[i].turnStr, sizeof(m_bruteItems[i].turnStr), "%d:%d", turn - rangeSize - 1, turn + rangeSize + 1);
-            }
-        }
-
+        // right column
         ImGui::NextColumn();
+        ImGui::Text("Conditions to Match");
+        ImGui::Separator();
 
-        // bruteforce target checks, bruteforce is currently awful and will be replaced with new system in next update
-        ImGui::Text("Conditions to Match:");
-        ImGui::InputInt("On Tic", &m_checkTic);
-        ImGui::Checkbox("Require Use Success", &m_checkUse);
+        const char* ops[] = {"=", "!=", ">=", ">", "<=", "<", "Min", "Max"};
+        auto RenderCheckRow = [&](const char* label, BRSCheckItem& item) {
+            ImGui::Checkbox(label, &item.active);
+            ImGui::SameLine(85.0f);
+            ImGui::PushID(label);
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::Combo("##op", &item.op, ops, 8);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(95.0f);
+            ImGui::InputText("##val", item.val, sizeof(item.val));
+            ImGui::PopID();
+        };
 
-        const char* compOps[] = { "=", ">=", ">", "<=", "<" };
-
-        ImGui::Checkbox("RNG", &m_rngActive); ImGui::SameLine(100);
-        ImGui::Combo("##RngOp", &m_rngOp, "= \0!= \0"); ImGui::SameLine(180);
-        ImGui::InputText("##RngVal", m_rngVal, sizeof(m_rngVal));
-
-        ImGui::Checkbox("Damage", &m_damageActive); ImGui::SameLine(100);
-        ImGui::Combo("##DmgOp", &m_damageOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputInt("##DmgVal", &m_damageVal);
-
-        ImGui::Checkbox("X Pos", &m_xPosActive); ImGui::SameLine(100);
-        ImGui::Combo("##XOp", &m_xPosOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##XVal", &m_xPosVal);
-
-        ImGui::Checkbox("Y Pos", &m_yPosActive); ImGui::SameLine(100);
-        ImGui::Combo("##YOp", &m_yPosOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##YVal", &m_yPosVal);
-
-        ImGui::Checkbox("Z Pos", &m_zPosActive); ImGui::SameLine(100);
-        ImGui::Combo("##ZOp", &m_zPosOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##ZVal", &m_zPosVal);
-
-        ImGui::Checkbox("X Mom", &m_xMomActive); ImGui::SameLine(100);
-        ImGui::Combo("##XMOp", &m_xMomOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##XMVal", &m_xMomVal);
-
-        ImGui::Checkbox("Y Mom", &m_yMomActive); ImGui::SameLine(100);
-        ImGui::Combo("##YMOp", &m_yMomOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##YMVal", &m_yMomVal);
-
-        ImGui::Checkbox("Speed", &m_speedActive); ImGui::SameLine(100);
-        ImGui::Combo("##SpdOp", &m_speedOp, compOps, 5); ImGui::SameLine(180);
-        ImGui::InputDouble("##SpdVal", &m_speedVal);
+        RenderCheckRow("Speed", m_chkSpeed);
+        RenderCheckRow("Damage", m_chkDamage);
+        RenderCheckRow("X Pos", m_chkX);
+        RenderCheckRow("Y Pos", m_chkY);
+        RenderCheckRow("Z Pos", m_chkZ);
+        RenderCheckRow("X Mom", m_chkMomX);
+        RenderCheckRow("Y Mom", m_chkMomY);
+		
+		// linedef action check
+        ImGui::Checkbox("Linedef", &m_chkLinedef.active);
+        ImGui::SameLine(85.0f);
+        ImGui::PushID("LinedefCheck");
+        const char* lineTypes[] = {"act", "skip"};
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::Combo("##type", &m_chkLinedefType, lineTypes, 2);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(95.0f);
+        ImGui::InputText("##id", m_chkLinedef.val, sizeof(m_chkLinedef.val));
+        ImGui::PopID();
+		
+		// use trigger
+		if (ImGui::Checkbox("Used Switch/Door", &m_chkUse.active)) {
+            m_chkUse.op = 0; // "=="
+            strcpy(m_chkUse.val, "1");
+        }
 
         ImGui::Columns(1);
+        ImGui::Spacing();
         ImGui::Separator();
 
-        // control execution
-        if (m_bruteRunning) {
-            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Brute force running...");
-            if (ImGui::Button("Abort Search")) {
-                m_abortBrute = true;
+        // middle: auto-range
+        ImGui::Text("Auto-Range Configuration");
+
+        ImGui::Text("Preset:");
+        ImGui::SameLine();
+        const char* presets[] = {"1", "2", "3", "4", "5", "Max Range (Pseudo)", "Max Range (True)"};
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::Combo("##AutoRangePreset", &m_brsAutoRangePreset, presets, 7);
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Avoid Turbo (limit to 50)", &m_avoidTurbo);
+
+        ImGui::SameLine();
+        if (ImGui::Button("Apply Auto-Ranges to Tics")) {
+            int rad = m_brsAutoRangePreset + 1;
+            int runStrafeMax = m_avoidTurbo ? 50 : 127;
+            int runStrafeMin = m_avoidTurbo ? -50 : -128;
+            int turnMax = 127;
+            int turnMin = -128;
+
+            for (size_t i = 0; i < m_brsTics.size(); ++i) {
+                int targetTic = m_brsTics[i].ticNumber;
+
+                if (m_brsAutoRangePreset <= 4) {
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    BRS_CalcAutoRange(r, rad, runStrafeMin, runStrafeMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
+                    BRS_CalcAutoRange(s, rad, runStrafeMin, runStrafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
+                    BRS_CalcAutoRange(t, rad, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                } else if (m_brsAutoRangePreset == 5) {
+                    strcpy(m_brsTics[i].runStr, "50:-50");
+                    strcpy(m_brsTics[i].strafeStr, "50:-50");
+                    strcpy(m_brsTics[i].turnStr, "32:-31");
+                } else if (m_brsAutoRangePreset == 6) {
+                    strcpy(m_brsTics[i].runStr, "50:-50");
+                    strcpy(m_brsTics[i].strafeStr, "50:-50");
+                    strcpy(m_brsTics[i].turnStr, "127:-128");
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // bottom
+        ImGui::Text("Worker Settings");
+
+        int maxThreads = static_cast<int>(std::thread::hardware_concurrency());
+        if (maxThreads < 1) maxThreads = (m_brsThreadGoal > 0 ? m_brsThreadGoal : 16);
+        maxThreads = (std::max)(maxThreads, static_cast<int>(m_brsThreadGoal));
+
+        const float labelWidth = 100.0f;
+
+        // threads
+        ImGui::Text("CPU Workers:");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+        ImGui::SliderInt("##CPUWorkers", &m_brsThreadGoal, 1, maxThreads);
+
+        // paths and arguments
+        auto RenderLeftLabeledInput = [&](const char* label, const char* id, char* buf, size_t bufSize) {
+            ImGui::Text("%s:", label);
+            ImGui::SameLine(labelWidth);
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            ImGui::InputText(id, buf, bufSize);
+        };
+
+        RenderLeftLabeledInput("DSDA Exe", "##dsdaExe", m_brsExePath, sizeof(m_brsExePath));
+        RenderLeftLabeledInput("IWAD Path", "##iwadPath", m_brsIwadPath, sizeof(m_brsIwadPath));
+        RenderLeftLabeledInput("PWAD Path", "##pwadPath", m_brsPwadPath, sizeof(m_brsPwadPath));
+        RenderLeftLabeledInput("Extra Args", "##extraArgs", m_brsExtraArgs, sizeof(m_brsExtraArgs));
+
+        ImGui::Checkbox("DSDA NoMo mode (-nomo)", &m_brsNomo);
+        ImGui::SameLine(220.0f);
+        ImGui::Checkbox("Preserve Undefined Tics", &m_brsPreserveUndefined);
+
+        ImGui::Separator();
+
+        // execution status
+        if (m_brsIsRunning) {
+            float progress = (m_brsTotalTasks > 0) ? ((float)m_brsCompletedTasks / (float)m_brsTotalTasks) : 0.0f;
+            ImGui::ProgressBar(progress, ImVec2(-1, 0), "");
+            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Running (%d / %d tasks complete)...", m_brsCompletedTasks.load(), m_brsTotalTasks.load());
+            if (ImGui::Button("Cancel Search", ImVec2(130, 0))) {
+                AbortBRSSearch();
             }
         } else {
-            if (ImGui::Button("Start Search", ImVec2(120, 0))) {
-                if (!m_bruteItems.empty()) {
-                    if (m_bruteThread.joinable()) m_bruteThread.join();
-
-                    m_abortBrute = false;
-                    m_bruteRunning = true;
-                    m_bruteSuccess = false;
-
-                    // check structure
-                    BruteCheck check;
-                    check.tic = m_checkTic;
-                    check.use = m_checkUse;
-
-                    check.rngFunc = [this](int val) {
-                        if (!m_rngActive) return true;
-                        auto indexes = ParseCmds(m_rngVal, true);
-                        bool matches = false;
-                        for (auto idx : indexes) if (idx == val) { matches = true; break; }
-                        return (m_rngOp == 0) ? matches : !matches;
-                    };
-
-                    auto MakeCmp = [](bool active, int op, double target) {
-                        return [active, op, target](double val) {
-                            if (!active) return true;
-                            switch (op) {
-                                case 0: return val == target;
-                                case 1: return val >= target;
-                                case 2: return val > target;
-                                case 3: return val <= target;
-                                case 4: return val < target;
-                            }
-                            return true;
-                        };
-                    };
-
-                    check.damageFunc = [this](int val) {
-                        if (!m_damageActive) return true;
-                        switch (m_damageOp) {
-                            case 0: return val == m_damageVal;
-                            case 1: return val >= m_damageVal;
-                            case 2: return val > m_damageVal;
-                            case 3: return val <= m_damageVal;
-                            case 4: return val < m_damageVal;
-                        }
-                        return true;
-                    };
-
-                    check.xPosFunc  = MakeCmp(m_xPosActive,  m_xPosOp,  m_xPosVal);
-                    check.yPosFunc  = MakeCmp(m_yPosActive,  m_yPosOp,  m_yPosVal);
-                    check.zPosFunc  = MakeCmp(m_zPosActive,  m_zPosOp,  m_zPosVal);
-                    check.xMomFunc  = MakeCmp(m_xMomActive,  m_xMomOp,  m_xMomVal);
-                    check.yMomFunc  = MakeCmp(m_yMomActive,  m_yMomOp,  m_yMomVal);
-                    check.speedFunc = MakeCmp(m_speedActive, m_speedOp, m_speedVal);
-
-                    // build tics
-                    std::vector<BruteTic> tics;
-                    for (auto const& it : m_bruteItems) {
-                        BruteTic b;
-                        b.tic = std::stoul(it.ticStr);
-                        b.fire = it.fire - 1;
-                        b.use = it.use - 1;
-                        b.turnsAreAngles = (it.turnOrAngle == 1);
-                        b.runCmds = ParseCmds(it.runStr);
-                        b.strafeCmds = ParseCmds(it.strafeStr);
-                        b.turnCmds = ParseCmds(it.turnStr, b.turnsAreAngles);
-                        tics.push_back(b);
-                    }
-
-                    // Launch async worker
-                    m_bruteThread = std::thread([this, tics, check]() {
-                        bool res = xdre::bruteForce(tics, check, m_abortBrute);
-                        m_bruteSuccess = res;
-                        m_bruteRunning = false;
-                        m_bruteFinishedNotification = true;
-                    });
-                }
+            if (ImGui::Button("Start Search", ImVec2(130, 0))) {
+                StartBRSSearch();
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(100, 0))) {
                 ImGui::CloseCurrentPopup();
             }
+            if (!m_brsStatusMessage.empty()) {
+                ImGui::SameLine();
+                ImGui::TextUnformatted(m_brsStatusMessage.c_str());
+            }
         }
+
+        if (!m_brsResultDetails.empty()) {
+            ImGui::Separator();
+            ImGui::Text("Results:");
+            ImGui::BeginChild("BRSResultBox", ImVec2(0, 60), true);
+            ImGui::TextUnformatted(m_brsResultDetails.c_str());
+            ImGui::EndChild();
+        }
+
         ImGui::EndPopup();
     }
 }

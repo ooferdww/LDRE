@@ -243,6 +243,16 @@ static arg_config_t arg_config[dsda_arg_count] = {
     "quits the game when brute force ends",
     arg_null,
   },
+  [dsda_arg_bf_quiet] = {
+    "-bf_quiet", NULL, NULL,
+    "silences periodic progress logging and intermediate candidate strings during brute force",
+    arg_null,
+  },
+  [dsda_arg_bf_queue] = {
+    "-bf_queue", NULL, NULL,
+    "reads brute force range definitions sequentially from a queue file",
+    arg_string,
+  },
   [dsda_arg_first_input] = {
     "-first_input", NULL, NULL,
     "builds the first frame F S T",

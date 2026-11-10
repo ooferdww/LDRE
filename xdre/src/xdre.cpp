@@ -1417,6 +1417,31 @@ int xdre::getCurrentTurn(int i, int listLength) {
     return cmd ? cmd->angleturn : 0;
 }
 
+int xdre::getTicRun(int ticIndex) {
+    auto& curTics = tics[displayplayer];
+    if (ticIndex < 0 || static_cast<std::size_t>(ticIndex) >= curTics.size()) {
+        return 0;
+    }
+    return curTics[ticIndex].forwardmove;
+}
+
+int xdre::getTicStrafe(int ticIndex) {
+    auto& curTics = tics[displayplayer];
+    if (ticIndex < 0 || static_cast<std::size_t>(ticIndex) >= curTics.size()) {
+        return 0;
+    }
+    return curTics[ticIndex].sidemove;
+}
+
+int xdre::getTicTurn(int ticIndex) {
+    auto& curTics = tics[displayplayer];
+    if (ticIndex < 0 || static_cast<std::size_t>(ticIndex) >= curTics.size()) {
+        return 0;
+    }
+    int const divisor = longtics ? 1 : 256;
+    return curTics[ticIndex].angleturn / divisor;
+}
+
 /* graveyard of currently defunct functions
  * using these will probably give you a bad time lol */
 

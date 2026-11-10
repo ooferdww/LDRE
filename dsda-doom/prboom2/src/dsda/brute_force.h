@@ -35,6 +35,7 @@ typedef enum {
   dsda_bf_ammo_4,
   dsda_bf_ammo_5,
   dsda_bf_bmapwidth,
+  dsda_bf_used,
   dsda_bf_attribute_max,
 
   dsda_bf_line_skip = 0,
@@ -110,6 +111,7 @@ int dsda_AddBruteForceFrame(int i,
                             byte buttons);
 void dsda_BruteForceWithoutMonsters(void);
 void dsda_BruteForceWithMonsters(void);
-void dsda_UpdateBruteForce(void);
-void dsda_EvaluateBruteForce(void);
+void dsda_TickBruteForce(void);
+void dsda_SetBFQuiet(dboolean quiet);
+dboolean dsda_LoadNextBFQueueSlice(void);
 void dsda_CopyBruteForceCommand(ticcmd_t* cmd);

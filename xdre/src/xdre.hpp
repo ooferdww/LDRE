@@ -112,6 +112,10 @@ namespace xdre {
     int getCurrentStrafe(int i, int listLength);
     int getCurrentRun(int i, int listLength);
     int getCurrentTurn(int i, int listLength);
+	
+	int getTicRun(int ticIndex);
+    int getTicStrafe(int ticIndex);
+    int getTicTurn(int ticIndex);
 };
 
 

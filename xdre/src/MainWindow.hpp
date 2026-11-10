@@ -7,7 +7,44 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+#include <windows.h>
 #include "xdre.hpp"
+
+// brs settings
+struct BRSTicItem {
+    int ticNumber = 0;
+    char runStr[32] = "0:0";
+    char strafeStr[32] = "0:0";
+    char turnStr[32] = "0:0";
+    int fire = 0;       // 0: No, 1: Yes, 2: Both
+    int use = 0;        // 0: No, 1: Yes, 2: Both
+    int weapon = 0;     // 0: No change, 1-9: Weapon index
+
+    // cached range factors
+    std::vector<int> parsedRun;
+    std::vector<int> parsedStrafe;
+    std::vector<int> parsedTurn;
+    int runSize = 1;
+    int strafeSize = 1;
+    int turnSize = 1;
+    std::vector<int> runFactors;
+    std::vector<int> strafeFactors;
+    std::vector<int> turnFactors;
+};
+
+// task queue
+struct BRSTask {
+    int taskIndex;
+    std::string command;
+};
+
+// worker tracking
+struct BRSWorker {
+    int taskIndex = -1;
+    HANDLE hProcess = NULL;
+    HANDLE hThread = NULL;
+    DWORD pid = 0;
+};
 
 enum class XCmd {
     None,
@@ -45,7 +82,7 @@ enum class XCmd {
 
 class MainWindow {
 public:
-    MainWindow();
+    MainWindow(int argc = 0, char** argv = nullptr);
     ~MainWindow();
 
     void Init();
@@ -82,6 +119,61 @@ public:
     void SetDoomPos(int x, int y) { m_doomPosX = x; m_doomPosY = y; }
 
 private:
+    void RenderBRSDialog();
+    void StartBRSSearch();
+    void AbortBRSSearch();
+    void BRSWorkerThread();
+    void CleanupBRSArtifacts(int winningIndex);
+	void DetectStartupWads(int argc, char** argv);
+
+    bool m_showBRSDialog = false;
+
+    // brs state
+    std::vector<BRSTicItem> m_brsTics;
+    int m_selectedBRSTic = -1;
+    
+    // brs engine and path
+    char m_brsExePath[MAX_PATH] = "dsda-doom.exe";
+    char m_brsIwadPath[MAX_PATH] = "";
+    char m_brsPwadPath[MAX_PATH] = "";
+    char m_brsDemoPath[MAX_PATH] = "";
+    char m_brsExtraArgs[256] = "-bf_quiet -nosound -geom 320x240";
+    int m_brsThreadGoal = 0;
+    bool m_brsNomo = false;
+    bool m_brsPreserveUndefined = true;
+    int m_brsAutoRangePreset = 2; // Default range 3
+	bool m_brsAutoLoadResult = true;
+    bool m_brsAutoLoadResultEditBuffer = true;
+    int  m_brsInitialTic = 0;
+    std::atomic<bool> m_brsPendingReload{false};
+    std::string m_brsPendingReloadPath = "";
+
+    // brs conditions
+    struct BRSCheckItem {
+        bool active = false;
+        int op = 0; // 0: =, 1: !=, 2: >=, 3: >, 4: <=, 5: <, 6: Min, 7: Max
+        char val[32] = "0";
+    };
+
+    BRSCheckItem m_chkX, m_chkY, m_chkZ;
+    BRSCheckItem m_chkMomX, m_chkMomY, m_chkSpeed;
+    BRSCheckItem m_chkDamage, m_chkRng, m_chkLinedef;
+	int m_chkLinedefType = 0; // 0: act, 1: skip
+    BRSCheckItem m_chkArmour, m_chkHealth;
+	BRSCheckItem m_chkUse;
+    char m_brsExtraChecks[256] = "";
+
+    // brs background engine
+    std::thread m_brsSupervisorThread;
+    std::mutex m_brsWorkerMutex;
+    std::atomic<bool> m_brsIsRunning{false};
+    std::atomic<bool> m_brsAbortRequested{false};
+    std::atomic<int> m_brsCompletedTasks{0};
+    std::atomic<int> m_brsTotalTasks{0};
+    int m_brsWinningTaskIndex = -1;
+    std::string m_brsStatusMessage = "";
+    std::string m_brsResultDetails = "";
+
     void ProcessInputField(const char* input);
     
     // ui layout

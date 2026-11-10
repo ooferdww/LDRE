@@ -1538,8 +1538,9 @@ void G_Ticker (void)
     END_ONCE
   }
 
-  if (dsda_BruteForce())
-    dsda_EvaluateBruteForce();
+  if (dsda_BruteForce()) {
+    dsda_TickBruteForce();
+  }
 
   if (dsda_BuildMode())
     dsda_RefreshBuildMode();
@@ -1582,7 +1583,6 @@ void G_Ticker (void)
 
     if (dsda_BruteForce())
     {
-      dsda_UpdateBruteForce();
       dsda_RemovePauseMode(PAUSE_BUILDMODE);
     }
 
@@ -1704,7 +1704,9 @@ void G_Ticker (void)
         inventory = false;
     }
 
-    dsda_DisplayNotifications();
+    if (!dsda_BruteForce()) {
+	dsda_DisplayNotifications();
+	}
   }
 
   // cph - if the gamestate changed, we may need to clean up the old gamestate
@@ -1731,11 +1733,14 @@ void G_Ticker (void)
   {
     case GS_LEVEL:
       P_Ticker();
-      P_WalkTicker();
-      mlooky = 0;
-      AM_Ticker();
-      ST_Ticker();
-      HU_Ticker();
+      if (!dsda_BruteForce())
+      {
+        P_WalkTicker();
+        mlooky = 0;
+        AM_Ticker();
+        ST_Ticker();
+        HU_Ticker();
+      }
       break;
 
     case GS_INTERMISSION:
@@ -2481,26 +2486,29 @@ void G_AfterLoad(void)
 
   dsda_ResetTrackers();
 
-  R_ActivateSectorInterpolations(); //e6y
-  R_SmoothPlaying_Reset(NULL); // e6y
-
-  RecalculateDrawnSubsectors();
-
-  if (hexen)
+  if (!dsda_BruteForce())
   {
-    SB_SetClassData();
+    R_ActivateSectorInterpolations(); //e6y
+    R_SmoothPlaying_Reset(NULL); // e6y
+
+    RecalculateDrawnSubsectors();
+
+    if (hexen)
+    {
+      SB_SetClassData();
+    }
+
+    if (raven)
+    {
+      players[consoleplayer].readyArtifact = players[consoleplayer].inventory[inv_ptr].type;
+    }
+
+    if (setsizeneeded)
+      R_ExecuteSetViewSize ();
+
+    BorderNeedRefresh = true;
+    ST_Start();
   }
-
-  if (raven)
-  {
-    players[consoleplayer].readyArtifact = players[consoleplayer].inventory[inv_ptr].type;
-  }
-
-  if (setsizeneeded)
-    R_ExecuteSetViewSize ();
-
-  BorderNeedRefresh = true;
-  ST_Start();
 }
 
 void G_DoLoadGame(void)

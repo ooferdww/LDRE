@@ -603,7 +603,7 @@ void M_SaveDefaults (void)
   FILE* f;
   int maxlen;
 
-  if (forget_config_file)
+  if (forget_config_file || dsda_Flag(dsda_arg_bf_quiet)) /* don't write config in quiet bruteforce mode */
     return;
 
   f = M_OpenFile(defaultfile, "w");

@@ -59,6 +59,8 @@ typedef enum {
   dsda_arg_tas,
   dsda_arg_build,
   dsda_arg_quit_after_brute_force,
+  dsda_arg_bf_quiet,
+  dsda_arg_bf_queue,
   dsda_arg_first_input,
   dsda_arg_command,
   dsda_arg_skipsec,

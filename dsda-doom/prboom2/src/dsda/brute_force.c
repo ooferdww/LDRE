@@ -31,8 +31,15 @@
 #include "dsda/skip.h"
 #include "dsda/time.h"
 #include "dsda/utility.h"
+#include "dsda/args.h"
 
 #include "brute_force.h"
+
+#if defined(_WIN32) || defined(_MSC_VER)
+#ifndef strtok_r
+#define strtok_r(str, delim, saveptr) strtok_s(str, delim, saveptr)
+#endif
+#endif
 
 #define MAX_BF_DEPTH 35
 #define MAX_BF_CONDITIONS 16
@@ -56,6 +63,7 @@ typedef struct {
   dsda_bf_operator_t operator;
   fixed_t value;
   fixed_t secondary_value;
+  int64_t value_sq;
 } bf_condition_t;
 
 typedef struct {
@@ -82,6 +90,22 @@ static dsda_key_frame_t nomo_key_frame;
 static bf_target_t bf_target;
 static ticcmd_t bf_result[MAX_BF_DEPTH];
 
+static int bf_progress_counter;
+#define BF_PROGRESS_INTERVAL 10000
+
+extern int xUseSuccess;
+static dboolean bf_check_use_active = false;
+
+static dboolean bf_quiet;
+
+void dsda_SetBFQuiet(dboolean quiet) {
+  bf_quiet = quiet;
+}
+
+static FILE* bf_queue_file = NULL;
+static dboolean bf_queue_mode = false;
+static int bf_queue_slice_index = 0;
+
 const char* dsda_bf_attribute_names[dsda_bf_attribute_max] = {
   [dsda_bf_x] = "x",
   [dsda_bf_y] = "y",
@@ -100,6 +124,7 @@ const char* dsda_bf_attribute_names[dsda_bf_attribute_max] = {
   [dsda_bf_ammo_4] = "am4",
   [dsda_bf_ammo_5] = "am5",
   [dsda_bf_bmapwidth] = "bmw",
+  [dsda_bf_used] = "use",
 };
 
 const char* dsda_bf_misc_names[dsda_bf_misc_max] = {
@@ -160,45 +185,57 @@ static dboolean fixed_point_attribute[dsda_bf_attribute_max] = {
   [dsda_bf_ammo_4] = false,
   [dsda_bf_ammo_5] = false,
   [dsda_bf_bmapwidth] = false,
+  [dsda_bf_used] = false,
 };
 
-static dboolean dsda_AdvanceBFRange(bf_range_t* range) {
-  ++range->i;
+static inline dboolean dsda_AdvanceBFRange(bf_range_t* range, int step) {
+  range->i += step;
+  if (range->i <= range->max)
+    return true;
 
-  if (range->i > range->max) {
-    range->i = range->min;
-    return false;
+  range->i = range->min;
+  return false;
+}
+
+static inline dboolean dsda_AdvanceBruteForceFrame(int frame) {
+  bf_t* const bf = &brute_force[frame];
+
+  if (dsda_AdvanceBFRange(&bf->angleturn, 256))
+    return true;
+  if (dsda_AdvanceBFRange(&bf->sidemove, 1))
+    return true;
+  if (dsda_AdvanceBFRange(&bf->forwardmove, 1))
+    return true;
+
+  return false;
+}
+
+static inline int dsda_AdvanceBruteForce(void) {
+  const int last_frame = bf_depth - 1;
+
+  // hot path: advance bottom frame directly
+  if (dsda_AdvanceBruteForceFrame(last_frame))
+    return last_frame;
+
+  // cold path: backtrack through parent frames
+  for (int i = last_frame - 1; i >= 0; --i) {
+    if (dsda_AdvanceBruteForceFrame(i))
+      return i;
   }
 
-  return true;
+  return -1;
 }
 
-static dboolean dsda_AdvanceBruteForceFrame(int frame) {
-  if (!dsda_AdvanceBFRange(&brute_force[frame].angleturn))
-    if (!dsda_AdvanceBFRange(&brute_force[frame].sidemove))
-      if (!dsda_AdvanceBFRange(&brute_force[frame].forwardmove))
-        return false;
-
-  return true;
-}
-
-static int dsda_AdvanceBruteForce(void) {
-  int i;
-
-  for (i = bf_depth - 1; i >= 0; --i)
-    if (dsda_AdvanceBruteForceFrame(i))
-      break;
-
-  return i;
-}
-
-static void dsda_CopyBFCommandDepth(ticcmd_t* cmd, bf_t* bf) {
-  memset(cmd, 0, sizeof(*cmd));
-
-  cmd->angleturn = bf->angleturn.i << 8;
-  cmd->forwardmove = bf->forwardmove.i;
-  cmd->sidemove = bf->sidemove.i;
+static inline void dsda_CopyBFCommandDepth(ticcmd_t* cmd, const bf_t* bf) {
+  cmd->forwardmove = (signed char)bf->forwardmove.i;
+  cmd->sidemove = (signed char)bf->sidemove.i;
+  cmd->angleturn = (short)bf->angleturn.i;
   cmd->buttons = bf->buttons;
+  cmd->lookfly = 0;
+  cmd->arti = 0;
+#ifdef XDRE
+  memset(&cmd->ex, 0, sizeof(cmd->ex));
+#endif
 }
 
 static void dsda_CopyBFResult(bf_t* bf, int depth) {
@@ -222,6 +259,9 @@ static void dsda_StoreBFKeyFrame(int frame) {
 static void dsda_PrintBFProgress(void) {
   int percent;
   unsigned long long elapsed_time;
+
+  if (bf_quiet)
+    return;
 
   percent = 100 * bf_volume / bf_volume_max;
   elapsed_time = dsda_ElapsedTimeMS(dsda_timer_brute_force);
@@ -305,6 +345,8 @@ static fixed_t dsda_BFAttribute(int attribute) {
       return player->ammo[5];
     case dsda_bf_bmapwidth:
       return bmapwidth;
+	case dsda_bf_used:
+      return xUseSuccess;
     default:
       return 0;
   }
@@ -447,20 +489,92 @@ static void dsda_BFEvaluateTarget(void) {
 }
 
 static dboolean dsda_BFConditionsReached(void) {
-  int i, reached;
+  int i;
+  fixed_t value;
+  int64_t speed_sq = -1;
+  fixed_t cached_attr_val[dsda_bf_attribute_max];
+  dboolean attr_cached[dsda_bf_attribute_max] = { false };
 
-  reached = 0;
-  for (i = 0; i < bf_condition_count; ++i)
-    reached += dsda_BFConditionReached(i);
+  for (i = 0; i < bf_condition_count; ++i) {
+    const bf_condition_t* const cond = &bf_condition[i];
 
-  if (reached == bf_condition_count)
-    if (bf_target.enabled) {
-      dsda_BFEvaluateTarget();
-
-      return false;
+    if (cond->operator == dsda_bf_operator_misc) {
+      if (!dsda_BFMiscConditionReached(i))
+        return false;
+      continue;
     }
 
-  return reached == bf_condition_count;
+    // evaluate speed via squared momentum instead of sqrt
+    if (cond->attribute == dsda_bf_speed) {
+      if (speed_sq < 0) {
+        player_t* player = &players[displayplayer];
+        int64_t mx = player->mo->momx;
+        int64_t my = player->mo->momy;
+        speed_sq = ((mx * mx) + (my * my)) >> FRACBITS;
+      }
+
+      switch (cond->operator) {
+        case dsda_bf_less_than:
+          if (!(speed_sq < cond->value_sq)) return false;
+          break;
+        case dsda_bf_less_than_or_equal_to:
+          if (!(speed_sq <= cond->value_sq)) return false;
+          break;
+        case dsda_bf_greater_than:
+          if (!(speed_sq > cond->value_sq)) return false;
+          break;
+        case dsda_bf_greater_than_or_equal_to:
+          if (!(speed_sq >= cond->value_sq)) return false;
+          break;
+        case dsda_bf_equal_to:
+          if (!(speed_sq == cond->value_sq)) return false;
+          break;
+        case dsda_bf_not_equal_to:
+          if (!(speed_sq != cond->value_sq)) return false;
+          break;
+        default:
+          return false;
+      }
+      continue;
+    }
+
+    // standard attribute lookup path
+    if (!attr_cached[cond->attribute]) {
+      cached_attr_val[cond->attribute] = dsda_BFAttribute(cond->attribute);
+      attr_cached[cond->attribute] = true;
+    }
+    value = cached_attr_val[cond->attribute];
+
+    switch (cond->operator) {
+      case dsda_bf_less_than:
+        if (!(value < cond->value)) return false;
+        break;
+      case dsda_bf_less_than_or_equal_to:
+        if (!(value <= cond->value)) return false;
+        break;
+      case dsda_bf_greater_than:
+        if (!(value > cond->value)) return false;
+        break;
+      case dsda_bf_greater_than_or_equal_to:
+        if (!(value >= cond->value)) return false;
+        break;
+      case dsda_bf_equal_to:
+        if (!(value == cond->value)) return false;
+        break;
+      case dsda_bf_not_equal_to:
+        if (!(value != cond->value)) return false;
+        break;
+      default:
+        return false;
+    }
+  }
+
+  if (bf_target.enabled) {
+    dsda_BFEvaluateTarget();
+    return false;
+  }
+
+  return true;
 }
 
 dboolean dsda_BruteForce(void) {
@@ -470,6 +584,8 @@ dboolean dsda_BruteForce(void) {
 void dsda_ResetBruteForceConditions(void) {
   bf_condition_count = 0;
   memset(&bf_target, 0, sizeof(bf_target));
+  bf_check_use_active = false;
+  xUseSuccess = 0;
 }
 
 void dsda_AddMiscBruteForceCondition(dsda_bf_attribute_t attribute, fixed_t value) {
@@ -505,8 +621,16 @@ void dsda_AddBruteForceCondition(dsda_bf_attribute_t attribute,
   bf_condition[bf_condition_count].operator = operator;
   bf_condition[bf_condition_count].value = value;
 
-  if (fixed_point_attribute[attribute])
+  if (fixed_point_attribute[attribute]) {
     bf_condition[bf_condition_count].value <<= FRACBITS;
+    if (attribute == dsda_bf_speed) {
+      int64_t v = bf_condition[bf_condition_count].value;
+      bf_condition[bf_condition_count].value_sq = (v * v) >> FRACBITS;
+    }
+  }
+
+  if (attribute == dsda_bf_used)
+    bf_check_use_active = true;
 
   ++bf_condition_count;
 
@@ -561,8 +685,8 @@ int dsda_KeepBruteForceFrame(int i) {
   brute_force[i].sidemove.min = cmd.sidemove;
   brute_force[i].sidemove.max = cmd.sidemove;
 
-  brute_force[i].angleturn.min = cmd.angleturn >> 8;
-  brute_force[i].angleturn.max = cmd.angleturn >> 8;
+  brute_force[i].angleturn.min = cmd.angleturn;
+  brute_force[i].angleturn.max = cmd.angleturn;
 
   brute_force[i].buttons = cmd.buttons;
 
@@ -587,12 +711,94 @@ int dsda_AddBruteForceFrame(int i,
   brute_force[i].sidemove.min = sidemove_min;
   brute_force[i].sidemove.max = sidemove_max;
 
-  brute_force[i].angleturn.min = angleturn_min;
-  brute_force[i].angleturn.max = angleturn_max;
+  brute_force[i].angleturn.min = angleturn_min << 8;
+  brute_force[i].angleturn.max = angleturn_max << 8;
 
   brute_force[i].buttons = buttons;
 
   return true;
+}
+
+// parse and apply singular lines from the queue textfile
+static dboolean dsda_ParseBFQueueLine(const char* line) {
+  char buf[1024];
+  char* cmd;
+  char* saveptr1;
+
+  if (!line || !*line)
+    return false;
+
+  strncpy(buf, line, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  cmd = strtok_r(buf, ";\r\n", &saveptr1);
+  while (cmd) {
+    while (*cmd == ' ' || *cmd == '\t') cmd++;
+    if (!strncmp(cmd, "bf.frame ", 9)) {
+      int frame = 0, fmin = 0, fmax = 0, smin = 0, smax = 0, amin = 0, amax = 0;
+      char fstr[32], sstr[32], tstr[32];
+      byte buttons = 0;
+      char extra[64] = "";
+
+      if (sscanf(cmd + 9, "%d %31s %31s %31s %63[^\n]", &frame, fstr, sstr, tstr, extra) >= 4) {
+		char* wp = strstr(extra, "c");
+        if (sscanf(fstr, "%d:%d", &fmin, &fmax) == 1) fmax = fmin;
+        if (sscanf(sstr, "%d:%d", &smin, &smax) == 1) smax = smin;
+        if (sscanf(tstr, "%d:%d", &amin, &amax) == 1) amax = amin;
+
+        if (strstr(extra, "a")) buttons |= 1;
+        if (strstr(extra, "u")) buttons |= 2;
+        if (wp && *(wp + 1) >= '0' && *(wp + 1) <= '9') {
+          buttons |= ((*(wp + 1) - '0') << 3);
+        }
+
+        dsda_AddBruteForceFrame(frame, fmin, fmax, smin, smax, amin, amax, buttons);
+      }
+    }
+    cmd = strtok_r(NULL, ";\r\n", &saveptr1);
+  }
+  return true;
+}
+
+// rewind to baseline, advance to next line in queue and recalculate
+dboolean dsda_LoadNextBFQueueSlice(void) {
+  char line[2048];
+  int i, turn_steps;
+
+  if (!bf_queue_file)
+    return false;
+
+  while (fgets(line, sizeof(line), bf_queue_file)) {
+    // Skip empty lines or comments
+    char* p = line;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '\0' || *p == '\r' || *p == '\n' || *p == '#')
+      continue;
+
+    if (dsda_ParseBFQueueLine(p)) {
+      bf_queue_slice_index++;
+      bf_volume = 0;
+      bf_volume_max = 1;
+
+      for (i = 0; i < bf_depth; ++i) {
+        turn_steps = ((brute_force[i].angleturn.max - brute_force[i].angleturn.min) >> 8) + 1;
+        bf_volume_max *= (brute_force[i].forwardmove.max - brute_force[i].forwardmove.min + 1) *
+                         (brute_force[i].sidemove.max - brute_force[i].sidemove.min + 1) *
+                         turn_steps;
+
+        brute_force[i].forwardmove.i = brute_force[i].forwardmove.min;
+        brute_force[i].sidemove.i = brute_force[i].sidemove.min;
+        brute_force[i].angleturn.i = brute_force[i].angleturn.min;
+      }
+
+      lprintf(LO_INFO, "Queue slice %d starting: %lld permutations\n", bf_queue_slice_index, bf_volume_max);
+      return true;
+    }
+  }
+
+  fclose(bf_queue_file);
+  bf_queue_file = NULL;
+  return false;
 }
 
 void dsda_BruteForceWithoutMonsters(void) {
@@ -605,6 +811,7 @@ void dsda_BruteForceWithMonsters(void) {
 
 dboolean dsda_StartBruteForce(int depth) {
   int i;
+  int turn_steps;
 
   if (!dsda_BuildMode()) {
     lprintf(LO_WARN, "You cannot start brute force outside of build mode!\n");
@@ -622,6 +829,11 @@ dboolean dsda_StartBruteForce(int depth) {
   bf_logictic = true_logictic;
   bf_volume = 0;
   bf_volume_max = 1;
+  bf_progress_counter = BF_PROGRESS_INTERVAL;
+  
+  if (dsda_Flag(dsda_arg_bf_quiet)) {
+    bf_quiet = true;
+  }
 
   for (i = 0; i < bf_depth; ++i) {
     lprintf(LO_INFO, "  %d: F %d:%d S %d:%d T %d:%d B %d\n", i,
@@ -630,9 +842,10 @@ dboolean dsda_StartBruteForce(int depth) {
             brute_force[i].angleturn.min, brute_force[i].angleturn.max,
             brute_force[i].buttons);
 
+    turn_steps = ((brute_force[i].angleturn.max - brute_force[i].angleturn.min) >> 8) + 1;
     bf_volume_max *= (brute_force[i].forwardmove.max - brute_force[i].forwardmove.min + 1) *
                      (brute_force[i].sidemove.max - brute_force[i].sidemove.min + 1) *
-                     (brute_force[i].angleturn.max - brute_force[i].angleturn.min + 1);
+                     turn_steps;
 
     brute_force[i].forwardmove.i = brute_force[i].forwardmove.min;
     brute_force[i].sidemove.i = brute_force[i].sidemove.min;
@@ -640,6 +853,20 @@ dboolean dsda_StartBruteForce(int depth) {
   }
 
   lprintf(LO_INFO, "Testing %lld sequences with depth %d\n\n", bf_volume_max, bf_depth);
+  
+  if (dsda_Arg(dsda_arg_bf_queue)->found) {
+    bf_queue_mode = true;
+    bf_queue_file = fopen(dsda_Arg(dsda_arg_bf_queue)->value.v_string, "r");
+    if (!bf_queue_file) {
+      lprintf(LO_ERROR, "Failed to open brute force queue file: %s\n", dsda_Arg(dsda_arg_bf_queue)->value.v_string);
+      return false;
+    }
+    // override base cli range with first line from queue file
+    if (!dsda_LoadNextBFQueueSlice()) {
+      lprintf(LO_ERROR, "Queue file is empty: %s\n", dsda_Arg(dsda_arg_bf_queue)->value.v_string);
+      return false;
+    }
+  }
 
   bf_mode = true;
 
@@ -656,39 +883,65 @@ dboolean dsda_StartBruteForce(int depth) {
   return true;
 }
 
-void dsda_UpdateBruteForce(void) {
+void dsda_TickBruteForce(void) {
   int frame;
 
   frame = true_logictic - bf_logictic;
 
-  if (frame == bf_depth) {
-    if (bf_volume % 10000 == 0)
-      dsda_PrintBFProgress();
-
-    frame = dsda_AdvanceBruteForce();
-
-    if (frame >= 0)
-      dsda_RestoreBFKeyFrame(frame);
-  }
-  else
+  // intermediate frames: save checkpoint and let physics proceed
+  if (frame < bf_depth) {
     dsda_StoreBFKeyFrame(frame);
-}
-
-void dsda_EvaluateBruteForce(void) {
-  if (true_logictic - bf_logictic != bf_depth)
     return;
+  }
 
+  // terminal frame reached, evaluate conditions
   ++bf_volume;
 
   if (dsda_BFConditionsReached()) {
     dsda_CopyBFResult(brute_force, bf_depth);
     dsda_EndBF(BF_SUCCESS);
+	if (bf_check_use_active) {
+      xUseSuccess = 0;
+	}
+    return;
   }
-  else if (bf_volume >= bf_volume_max) {
-    if (bf_target.enabled && bf_target.evaluated)
+
+  if (bf_volume >= bf_volume_max) {
+    // if running in queue mode and another slice exists, load next slice
+    if (bf_queue_mode && dsda_LoadNextBFQueueSlice()) {
+      if (bf_check_use_active) {
+        xUseSuccess = 0;
+      }
+      dsda_RestoreBFKeyFrame(0);
+      return;
+    }
+
+    // if queue exhausted, finalize as normal
+    if (bf_target.enabled && bf_target.evaluated) {
       dsda_EndBF(BF_SUCCESS);
-    else
+    } else {
       dsda_EndBF(BF_FAILURE);
+    }
+
+    if (bf_check_use_active) {
+      xUseSuccess = 0;
+    }
+    return;
+  }
+
+  // periodic progress log with fast counter
+  if (--bf_progress_counter <= 0) {
+    dsda_PrintBFProgress();
+    bf_progress_counter = BF_PROGRESS_INTERVAL;
+  }
+
+  // restore keyframe for next branch after advancing
+  frame = dsda_AdvanceBruteForce();
+  if (frame >= 0) {
+    if (bf_check_use_active) {
+      xUseSuccess = 0;
+    }
+    dsda_RestoreBFKeyFrame(frame);
   }
 }
 
