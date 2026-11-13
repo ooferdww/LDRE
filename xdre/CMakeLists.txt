@@ -79,7 +79,7 @@ target_include_directories(xdre PRIVATE
 
 target_compile_definitions(xdre PRIVATE
     XDRE=1
-    PACKAGE_STRING="LDRE beta v0.4.1"
+    PACKAGE_STRING="LDRE beta v0.5"
     HAVE_CONFIG_H
 )
 

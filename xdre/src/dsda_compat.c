@@ -30,6 +30,10 @@
 #include "smooth.h"
 #include "r_fps.h"
 #include "w_wad.h"
+#include "am_map.h"
+#include "d_deh.h"
+#include "dsda/messenger.h"
+
 
 extern SDL_Window *sdl_window;
 extern void dsda_UpdateFlag(dsda_arg_identifier_t id, dboolean found);
@@ -52,6 +56,13 @@ static const ticcmd_t *XDRE_GetPlayerCmd(int player) {
         return &netcmds[player];
     return NULL;
 }
+
+/* automap */
+extern int automap_full;
+int x_automap_wanted = 0;
+extern int automap_follow;
+extern void XDRE_PanAutomap(int dx, int dy);
+extern void XDRE_ZoomAutomap(int direction);
 
 /* system funcs */
 
@@ -264,4 +275,45 @@ void XDRE_GetLoadedWads(char *iwad_out, size_t iwad_len, char *pwad_out, size_t 
     if (pwad_len_actual > 0 && pwad_out[pwad_len_actual - 1] == ' ') {
         pwad_out[pwad_len_actual - 1] = '\0';
     }
+}
+
+/* automap funcs */
+void XDRE_ToggleAutomap(void) {
+    if (gamestate != GS_LEVEL)
+        return;
+
+    x_automap_wanted = !x_automap_wanted;
+
+    if (x_automap_wanted) {
+        AM_Start(AM_OPEN_FULLAUTOMAP);
+    } else {
+        AM_Stop(false);
+    }
+}
+
+int XDRE_GetAutomapActive(void) {
+    return x_automap_wanted ? 1 : 0;
+}
+
+void XDRE_ToggleAutomapFollow(void) {
+    int nextVal = automap_follow ? 0 : 1;
+    automap_follow = nextVal;
+    dsda_UpdateIntConfig(dsda_config_automap_follow, nextVal, true);
+    dsda_AddMessage(automap_follow ? s_AMSTR_FOLLOWON : s_AMSTR_FOLLOWOFF);
+}
+
+int XDRE_GetAutomapFollow(void) {
+    return automap_follow ? 1 : 0;
+}
+
+void XDRE_DoPanAutomap(int dx, int dy) {
+    if (gamestate != GS_LEVEL)
+        return;
+    XDRE_PanAutomap(dx, dy);
+}
+
+void XDRE_DoZoomAutomap(int direction) {
+    if (gamestate != GS_LEVEL)
+        return;
+    XDRE_ZoomAutomap(direction);
 }

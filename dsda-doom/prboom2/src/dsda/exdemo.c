@@ -503,7 +503,7 @@ static void DemoEx_AddFeatures(wadtbl_t* wadtbl) {
 
 #ifdef XDRE
 static void DemoEx_AddPort(wadtbl_t* wadtbl) {
-  const char* const port_id = "ldre 0.4.0 beta";
+  const char* const port_id = "ldre 0.5.0 beta";
 
   AddPWADTableLump(wadtbl, DEMOEX_PORTNAME_LUMPNAME,
                    (const byte*) port_id, strlen(port_id));

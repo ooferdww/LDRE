@@ -58,6 +58,10 @@ enum class XCmd {
     DeleteTic,
     NewTic,
     ToggleBlood,
+	ToggleAutomap,
+	ToggleAutomapFollow,
+	ZoomAutomapIn,
+    ZoomAutomapOut,
     SetSavepoint,
     UnsetSavepoint,
     Load,
@@ -160,6 +164,9 @@ private:
     BRSCheckItem m_chkMomX, m_chkMomY, m_chkSpeed;
     BRSCheckItem m_chkDamage, m_chkRng, m_chkLinedef;
 	int m_chkLinedefType = 0; // 0: act, 1: skip
+	BRSCheckItem m_chkItem;
+	int m_chkItemMode = 0;  // 0: have, 1: lack
+    int m_chkItemIndex = 0; // index into item dropdown
     BRSCheckItem m_chkArmour, m_chkHealth;
 	BRSCheckItem m_chkUse;
     char m_brsExtraChecks[256] = "";

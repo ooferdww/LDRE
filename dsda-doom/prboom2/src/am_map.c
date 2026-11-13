@@ -2996,3 +2996,111 @@ void AM_Drawer (dboolean minimap)
 
   V_EndAutomapDraw();
 }
+
+#ifdef XDRE
+static int x_saved_follow = 1;
+static fixed_t x_saved_mx, x_saved_my, x_saved_mw, x_saved_mh;
+static fixed_t x_saved_scale_mtof, x_saved_scale_ftom;
+static dboolean x_has_saved_am_state = false;
+
+void XDRE_SaveAutomapState(void)
+{
+  x_saved_follow = automap_follow;
+  x_saved_mx = m_x;
+  x_saved_my = m_y;
+  x_saved_mw = m_w;
+  x_saved_mh = m_h;
+  x_saved_scale_mtof = scale_mtof;
+  x_saved_scale_ftom = scale_ftom;
+  x_has_saved_am_state = true;
+}
+
+void XDRE_RestoreAutomapState(void)
+{
+  if (!x_has_saved_am_state)
+    return;
+
+  x_has_saved_am_state = false;
+
+  automap_follow = x_saved_follow;
+  dsda_UpdateIntConfig(dsda_config_automap_follow, automap_follow, true);
+
+  if (automap_full && !automap_follow)
+  {
+    m_x = x_saved_mx;
+    m_y = x_saved_my;
+    m_w = x_saved_mw;
+    m_h = x_saved_mh;
+    m_x2 = m_x + m_w;
+    m_y2 = m_y + m_h;
+    scale_mtof = x_saved_scale_mtof;
+    scale_ftom = x_saved_scale_ftom;
+    prev_m_x = m_x;
+    prev_m_y = m_y;
+    prev_scale_mtof = scale_mtof;
+  }
+}
+
+void XDRE_PanAutomap(int dx, int dy)
+{
+  fixed_t incx, incy;
+
+  if (!automap_full || automap_follow)
+    return;
+
+  incx = dx * FTOM(F_PANINC);
+  incy = dy * FTOM(F_PANINC);
+
+  if (automap_rotate)
+  {
+    AM_rotate(&incx, &incy, viewangle - ANG90);
+  }
+
+  m_x += incx;
+  m_y += incy;
+
+  if (!automap_rotate)
+  {
+    if (m_x + m_w / 2 > max_x)
+      m_x = max_x - m_w / 2;
+    else if (m_x + m_w / 2 < min_x)
+      m_x = min_x - m_w / 2;
+
+    if (m_y + m_h / 2 > max_y)
+      m_y = max_y - m_h / 2;
+    else if (m_y + m_h / 2 < min_y)
+      m_y = min_y - m_h / 2;
+  }
+
+  m_x2 = m_x + m_w;
+  m_y2 = m_y + m_h;
+  prev_m_x = m_x;
+  prev_m_y = m_y;
+}
+
+void XDRE_ZoomAutomap(int direction)
+{
+  fixed_t zoom_factor;
+
+  if (!automap_full)
+    return;
+
+  // use designated step factor
+  zoom_factor = (direction > 0) ? (fixed_t)(FRACUNIT * 1.20f)
+                                : (fixed_t)(FRACUNIT / 1.20f);
+
+  scale_mtof = FixedMul(scale_mtof, zoom_factor);
+  scale_ftom = FixedDiv(FRACUNIT, scale_mtof);
+
+  if (scale_mtof < min_scale_mtof)
+    AM_minOutWindowScale();
+  else if (scale_mtof > max_scale_mtof)
+    AM_maxOutWindowScale();
+  else
+    AM_activateNewScale();
+
+  prev_scale_mtof = scale_mtof;
+  prev_m_x = m_x;
+  prev_m_y = m_y;
+}
+#endif

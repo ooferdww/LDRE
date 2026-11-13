@@ -367,6 +367,10 @@ void MainWindow::SetKeys() {
         else if (pair.first == "DeleteTic")      m_stringToCommandMap[pair.second] = XCmd::DeleteTic;
         else if (pair.first == "NewTic")         m_stringToCommandMap[pair.second] = XCmd::NewTic;
         else if (pair.first == "ToggleBlood")    m_stringToCommandMap[pair.second] = XCmd::ToggleBlood;
+		else if (pair.first == "ToggleAutomap")  m_stringToCommandMap[pair.second] = XCmd::ToggleAutomap;
+		else if (pair.first == "ToggleAutomapFollow") m_stringToCommandMap[pair.second] = XCmd::ToggleAutomapFollow;
+		else if (pair.first == "ZoomAutomapIn")       m_stringToCommandMap[pair.second] = XCmd::ZoomAutomapIn;
+        else if (pair.first == "ZoomAutomapOut")      m_stringToCommandMap[pair.second] = XCmd::ZoomAutomapOut;
         else if (pair.first == "SetSavepoint")   m_stringToCommandMap[pair.second] = XCmd::SetSavepoint;
         else if (pair.first == "UnsetSavepoint") m_stringToCommandMap[pair.second] = XCmd::UnsetSavepoint;
         else if (pair.first == "Load")           m_stringToCommandMap[pair.second] = XCmd::Load;
@@ -396,7 +400,8 @@ void MainWindow::LoadConfig() {
     const char* keyNames[] = {
         "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
         "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-        "ToggleBlood", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+        "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+        "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
         "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
         "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
         "BackwardDemo", "ForwardDemo", "ChangePlayer"
@@ -404,7 +409,8 @@ void MainWindow::LoadConfig() {
     const char* defaults[] = {
         "f", "u", "-", "+", "ts",
         "j", "i", "c", "x", "n",
-        "z", "ssp", "pss", "load", "save", "exit",
+        "z", "m", "k", "l", "o",
+        "ssp", "pss", "load", "save", "exit",
         "wq", "we", "sa", "sd", "re", "rt",
         "g", "tr", "ty", "tc", "tx",
         ",", ".", "v"
@@ -473,6 +479,10 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::DeleteTicX:    xdre::deleteTicX(val);         break;
         case XCmd::NewTic:        xdre::newTic();                break;
         case XCmd::ToggleBlood:   xdre::toggleBlood();      m_bloodEnabled = xdre::getBlood();    break;
+		case XCmd::ToggleAutomap: xdre::toggleAutomap();         break;
+		case XCmd::ToggleAutomapFollow: xdre::toggleAutomapFollow(); break;
+		case XCmd::ZoomAutomapIn:       xdre::zoomAutomap(1);        break;
+        case XCmd::ZoomAutomapOut:      xdre::zoomAutomap(-1);       break;
         case XCmd::SetSavepoint:  xdre::setSavepoint();          break;
         case XCmd::UnsetSavepoint:xdre::unsetSavepoint();        break;
         case XCmd::Load:          LoadReplayFile();              break;
@@ -638,7 +648,7 @@ void MainWindow::RenderMenuBar() {
                 const char* keyNames[] = {
                     "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
                     "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-                    "ToggleBlood", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+                    "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
                     "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
                     "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
                     "BackwardDemo", "ForwardDemo", "ChangePlayer"
@@ -1003,6 +1013,24 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
         return 0;
     }
 
+    // automap navigation handling
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && xdre::getAutomapActive()) {
+            const Uint8* state = SDL_GetKeyboardState(NULL);
+            int dx = 0;
+            int dy = 0;
+            if (state[SDL_SCANCODE_LEFT])  dx -= 1;
+            if (state[SDL_SCANCODE_RIGHT]) dx += 1;
+            if (state[SDL_SCANCODE_UP])    dy += 1;
+            if (state[SDL_SCANCODE_DOWN])  dy -= 1;
+
+            if (dx != 0 || dy != 0) {
+                xdre::panAutomap(dx, dy);
+            }
+        }
+        return 0;
+    }
+
     // single char interceptor
     if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) {
         ImWchar c = data->EventChar;
@@ -1018,6 +1046,9 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
 
         // if char maps to non-numeric command, execute
         if (cmd != XCmd::None && cmd <= XCmd::Exit) {
+            if ((cmd == XCmd::ZoomAutomapIn || cmd == XCmd::ZoomAutomapOut) && !xdre::getAutomapActive()) {
+                return 0; // pass through to buffer when automap is closed
+            }
             window->DoInput(cmd, 0);
             return 1; // discard char
         }
@@ -1038,6 +1069,9 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
         // check word bindings
         XCmd cmd = window->GetCommandForString(lowerBuf);
         if (cmd != XCmd::None && cmd <= XCmd::Exit) {
+            if ((cmd == XCmd::ZoomAutomapIn || cmd == XCmd::ZoomAutomapOut) && !xdre::getAutomapActive()) {
+                return 0; // do not consume 'l' or 'o' while typing words like "load"
+            }
             window->DoInput(cmd, 0);
             executed = true;
         }
@@ -1059,6 +1093,26 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
                 if (digit >= '1' && digit <= '4') {
                     unsigned int playerVal = static_cast<unsigned int>(digit - '0');
                     window->DoInput(XCmd::ChangePlayer, playerVal);
+                    executed = true;
+                }
+            }
+            // transpose left prefix (e.g. tr1-tr9)
+            const std::string& transposeLeftKey = window->GetStringForConfig("TransposeLeft");
+            if (!executed && !transposeLeftKey.empty() && lowerBuf.rfind(transposeLeftKey, 0) == 0 && lowerBuf.length() == transposeLeftKey.length() + 1) {
+                char digit = lowerBuf.back();
+                if (digit >= '1' && digit <= '9') {
+                    unsigned int transposeVal = static_cast<unsigned int>(digit - '0');
+                    window->DoInput(XCmd::TransposeLeft, transposeVal);
+                    executed = true;
+                }
+            }
+            // transpose right prefix (e.g. ty1-ty9)
+            const std::string& transposeRightKey = window->GetStringForConfig("TransposeRight");
+            if (!executed && !transposeRightKey.empty() && lowerBuf.rfind(transposeRightKey, 0) == 0 && lowerBuf.length() == transposeRightKey.length() + 1) {
+                char digit = lowerBuf.back();
+                if (digit >= '1' && digit <= '9') {
+                    unsigned int transposeVal = static_cast<unsigned int>(digit - '0');
+                    window->DoInput(XCmd::TransposeRight, transposeVal);
                     executed = true;
                 }
             }
@@ -1135,6 +1189,11 @@ void MainWindow::RenderGeneralSection() {
                                     ImGuiInputTextFlags_EnterReturnsTrue;
 
         bool enterPressed = ImGui::InputText("##CommandLineInput", m_inputBuffer, sizeof(m_inputBuffer), flags, InputUnifiedCallback, this);
+
+        if (ImGui::IsItemActive()) {
+            ImGui::SetItemKeyOwner(ImGuiKey_UpArrow);
+            ImGui::SetItemKeyOwner(ImGuiKey_DownArrow);
+        }
 
         bool submitCommand = (s_spaceCommandTriggered || enterPressed);
         s_spaceCommandTriggered = false;
@@ -1226,17 +1285,41 @@ void MainWindow::RenderHeaderDialog() {
     }
 
     if (ImGui::BeginPopupModal("Header Editor", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        if (ImGui::Combo("Complevel", &m_headerComplevelIndex, s_complevelNames, 6)) {
+        const float labelWidth = 115.0f;
+        const float controlWidth = 175.0f;
+
+        auto RenderLeftLabeledInt = [&](const char* label, const char* id, int& val) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%s", label);
+            ImGui::SameLine(labelWidth);
+            ImGui::SetNextItemWidth(controlWidth);
+            ImGui::InputInt(id, &val);
+        };
+
+        auto BoolCheckbox = [](const char* label, int& val) {
+            bool b = (val != 0);
+            if (ImGui::Checkbox(label, &b)) val = b ? 1 : 0;
+        };
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Complevel");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(controlWidth);
+        if (ImGui::Combo("##Complevel", &m_headerComplevelIndex, s_complevelNames, 6)) {
             m_headerOptions[0] = s_allowedComplevels[m_headerComplevelIndex];
             xdre::changeOptions(m_headerOptions);
         }
 
-        ImGui::InputInt("Skill", &m_headerOptions[1]);
-        ImGui::InputInt("Episode", &m_headerOptions[2]);
-        ImGui::InputInt("Map", &m_headerOptions[3]);
+        RenderLeftLabeledInt("Skill", "##Skill", m_headerOptions[1]);
+        RenderLeftLabeledInt("Episode", "##Episode", m_headerOptions[2]);
+        RenderLeftLabeledInt("Map", "##Map", m_headerOptions[3]);
 
         const char* dmChoices[] = { "0 - SP / Co-op", "1 - Deathmatch", "2 - Altdeath" };
-        ImGui::Combo("Deathmatch", &m_headerOptions[4], dmChoices, 3);
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Deathmatch");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(controlWidth);
+        ImGui::Combo("##Deathmatch", &m_headerOptions[4], dmChoices, 3);
 
         ImGui::Separator();
         ImGui::Text("Players In Game:");
@@ -1262,44 +1345,46 @@ void MainWindow::RenderHeaderDialog() {
         }
 
         ImGui::Separator();
-        auto BoolCheckbox = [](const char* label, int& val) {
-            bool b = (val != 0);
-            if (ImGui::Checkbox(label, &b)) val = b ? 1 : 0;
-        };
-
-        BoolCheckbox("Respawn", m_headerOptions[5]); ImGui::SameLine(180);
+        BoolCheckbox("Respawn", m_headerOptions[5]); ImGui::SameLine(155);
         BoolCheckbox("Fast Monsters", m_headerOptions[6]);
-        BoolCheckbox("No Monsters", m_headerOptions[7]); ImGui::SameLine(180);
+        BoolCheckbox("No Monsters", m_headerOptions[7]); ImGui::SameLine(155);
         BoolCheckbox("Longtics", m_headerOptions[27]);
 
-        BoolCheckbox("Monsters Remember", m_headerOptions[10]); ImGui::SameLine(180);
+#if 0
+        // temporarily hidden
+        BoolCheckbox("Monsters Remember", m_headerOptions[10]); ImGui::SameLine(155);
         BoolCheckbox("Weapon Recoil", m_headerOptions[12]);
-        BoolCheckbox("Allow Pushers", m_headerOptions[13]); ImGui::SameLine(180);
+        BoolCheckbox("Allow Pushers", m_headerOptions[13]); ImGui::SameLine(155);
         BoolCheckbox("Player Bobbing", m_headerOptions[14]);
-        BoolCheckbox("Demo Insurance", m_headerOptions[15]); ImGui::SameLine(180);
+        BoolCheckbox("Demo Insurance", m_headerOptions[15]); ImGui::SameLine(155);
         BoolCheckbox("Monster Infighting", m_headerOptions[17]);
-        BoolCheckbox("Monsters Backwards", m_headerOptions[20]); ImGui::SameLine(180);
+        BoolCheckbox("Monsters Backwards", m_headerOptions[20]); ImGui::SameLine(155);
         BoolCheckbox("Avoid Hazards", m_headerOptions[21]);
-        BoolCheckbox("Monster Friction", m_headerOptions[22]); ImGui::SameLine(180);
+        BoolCheckbox("Monster Friction", m_headerOptions[22]); ImGui::SameLine(155);
         BoolCheckbox("Help Friends", m_headerOptions[23]);
-        BoolCheckbox("Dog Jumping", m_headerOptions[24]); ImGui::SameLine(180);
+        BoolCheckbox("Dog Jumping", m_headerOptions[24]); ImGui::SameLine(155);
         BoolCheckbox("Climb Steep Stairs", m_headerOptions[25]);
+#endif
 
         ImGui::Separator();
-        ImGui::InputInt("RNG Seed", &m_headerOptions[16]);
-        ImGui::InputInt("Console Player", &m_headerOptions[8]);
-        ImGui::InputInt("Variable Friction", &m_headerOptions[11]);
-        ImGui::InputInt("Dogs (0-3)", &m_headerOptions[18]);
-        ImGui::InputInt("Friend Distance", &m_headerOptions[19]);
-        ImGui::InputInt("Compat Flags", &m_headerOptions[26]);
+        RenderLeftLabeledInt("RNG Seed", "##RNGSeed", m_headerOptions[16]);
+
+#if 0
+        // temporarily hidden
+        RenderLeftLabeledInt("Console Player", "##ConsolePlayer", m_headerOptions[8]);
+        RenderLeftLabeledInt("Variable Friction", "##VariableFriction", m_headerOptions[11]);
+        RenderLeftLabeledInt("Dogs (0-3)", "##Dogs", m_headerOptions[18]);
+        RenderLeftLabeledInt("Friend Distance", "##FriendDistance", m_headerOptions[19]);
+        RenderLeftLabeledInt("Compat Flags", "##CompatFlags", m_headerOptions[26]);
+#endif
 
         ImGui::Separator();
-        if (ImGui::Button("Apply Options", ImVec2(120, 0))) {
+        if (ImGui::Button("Apply Options", ImVec2(140, 0))) {
             xdre::changeOptions(m_headerOptions);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Close", ImVec2(120, 0))) {
+        if (ImGui::Button("Close", ImVec2(140, 0))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1328,7 +1413,7 @@ void MainWindow::RenderKeysDialog() {
             ImGui::InputText("##key", item.buffer, sizeof(item.buffer));
             ImGui::PopID();
 
-            if ((i + 1) % 10 == 0) {
+            if ((i + 1) % 11 == 0) {
                 ImGui::NextColumn();
             }
         }
@@ -1773,6 +1858,7 @@ void MainWindow::BRSWorkerThread() {
         else if (c.op == 5) opStr = "<";
         else if (c.op == 6) opStr = "min";
         else if (c.op == 7) opStr = "max";
+        else if (c.op == 8) opStr = "acap";
 
         if (c.op == 6 || c.op == 7) {
             condTokens.push_back(std::string(name) + " " + opStr);
@@ -1790,6 +1876,19 @@ void MainWindow::BRSWorkerThread() {
     AppendCond(m_chkMomX, "vx");
     AppendCond(m_chkMomY, "vy");
 	AppendCond(m_chkUse, "use");
+	
+	AppendCond(m_chkRng, "rng");
+
+    if (m_chkItem.active) {
+        const char* itemCodes[] = {
+            "rkc", "ykc", "bkc", "rsk", "ysk", "bsk",
+            "f", "p", "sg", "cg", "rl", "pg", "bfg", "cs", "ssg"
+        };
+        if (m_chkItemIndex >= 0 && m_chkItemIndex < (int)(sizeof(itemCodes) / sizeof(itemCodes[0]))) {
+            std::string prefix = (m_chkItemMode == 0) ? "have " : "lack ";
+            condTokens.push_back(prefix + itemCodes[m_chkItemIndex]);
+        }
+    }
 
     // append linedef condition
     if (m_chkLinedef.active && strlen(m_chkLinedef.val) > 0) {
@@ -1899,16 +1998,24 @@ void MainWindow::BRSWorkerThread() {
 
     bool isMinSearch = false;
     bool isMaxSearch = false;
-    for (const auto* item : { &m_chkSpeed, &m_chkDamage, &m_chkX, &m_chkY, &m_chkZ, &m_chkMomX, &m_chkMomY }) {
+    bool isAcapSearch = false;
+    double acapTarget = 0.0;
+
+    for (const auto* item : { &m_chkSpeed, &m_chkDamage, &m_chkX, &m_chkY, &m_chkZ, &m_chkMomX, &m_chkMomY, &m_chkRng }) {
         if (item->active) {
             if (item->op == 6) isMinSearch = true;
             if (item->op == 7) isMaxSearch = true;
+            if (item->op == 8) {
+                isAcapSearch = true;
+                try { acapTarget = std::stod(item->val); } catch (...) { acapTarget = 0.0; }
+            }
         }
     }
-    bool isOptimization = (isMinSearch || isMaxSearch);
+    bool isOptimization = (isMinSearch || isMaxSearch || isAcapSearch);
 
     double bestTargetValue = isMinSearch ? (std::numeric_limits<double>::max)()
                                          : -(std::numeric_limits<double>::max)();
+    double bestAcapDiff = (std::numeric_limits<double>::max)();
 
     m_brsTotalTasks = (int)taskQueue.size();
     int concurrentLimit = (std::min)(actualWorkers, m_brsTotalTasks.load());
@@ -1973,7 +2080,14 @@ void MainWindow::BRSWorkerThread() {
                         if (eqPos != std::string::npos) {
                             try {
                                 double val = std::stod(line.substr(eqPos + 1));
-                                if (isMinSearch && val < taskBestVal) {
+                                if (isAcapSearch) {
+                                    double diff = std::abs(val - acapTarget);
+                                    if (diff < bestAcapDiff) {
+                                        bestAcapDiff = diff;
+                                        taskBestVal = val;
+                                        foundCandidate = true;
+                                    }
+                                } else if (isMinSearch && val < taskBestVal) {
                                     taskBestVal = val;
                                     foundCandidate = true;
                                 } else if (isMaxSearch && val > taskBestVal) {
@@ -1990,8 +2104,14 @@ void MainWindow::BRSWorkerThread() {
                 if (isOptimization) {
                     if (foundCandidate) {
                         bool isNewGlobalBest = false;
-                        if (isMinSearch && taskBestVal < bestTargetValue) isNewGlobalBest = true;
-                        if (isMaxSearch && taskBestVal > bestTargetValue) isNewGlobalBest = true;
+                        if (isAcapSearch) {
+                            // bestAcapDiff already tracks global minimum distance across workers
+                            isNewGlobalBest = true;
+                        } else if (isMinSearch && taskBestVal < bestTargetValue) {
+                            isNewGlobalBest = true;
+                        } else if (isMaxSearch && taskBestVal > bestTargetValue) {
+                            isNewGlobalBest = true;
+                        }
 
                         if (isNewGlobalBest) {
                             bestTargetValue = taskBestVal;
@@ -2099,13 +2219,13 @@ void MainWindow::RenderBRSDialog() {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(676.0f, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(626.0f, 0), ImGuiCond_Always);
 
     if (ImGui::BeginPopupModal("Brute-force", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         
         // top section
         ImGui::Columns(2, "BRSTopSplit", true);
-        ImGui::SetColumnWidth(0, 380.0f);
+        ImGui::SetColumnWidth(0, 330.0f);
 
         // left column
         ImGui::Text("Tics to Brute-force");
@@ -2152,8 +2272,9 @@ void MainWindow::RenderBRSDialog() {
 
             m_brsTics.push_back(item);
 
+            // ascending order
             std::sort(m_brsTics.begin(), m_brsTics.end(), [](const BRSTicItem& a, const BRSTicItem& b) {
-                return a.ticNumber > b.ticNumber;
+                return a.ticNumber < b.ticNumber;
             });
 
             for (int i = 0; i < static_cast<int>(m_brsTics.size()); ++i) {
@@ -2185,24 +2306,28 @@ void MainWindow::RenderBRSDialog() {
         if (m_selectedBRSTic >= 0 && m_selectedBRSTic < (int)m_brsTics.size()) {
             auto& tic = m_brsTics[m_selectedBRSTic];
 
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Tic Index:");
-            ImGui::SameLine(75.0f);
-            ImGui::SetNextItemWidth(70.0f);
+            ImGui::SameLine(80.0f);
+            ImGui::SetNextItemWidth(90.0f);
             ImGui::InputInt("##ticNumber", &tic.ticNumber);
 
             // run and strafe
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Run:");
             ImGui::SameLine(50.0f);
             ImGui::SetNextItemWidth(90.0f);
             ImGui::InputText("##runStr", tic.runStr, sizeof(tic.runStr));
 
-            ImGui::SameLine(175.0f);
+            ImGui::SameLine(165.0f);
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Strafe:");
-            ImGui::SameLine(230.0f);
+            ImGui::SameLine(215.0f);
             ImGui::SetNextItemWidth(90.0f);
             ImGui::InputText("##strafeStr", tic.strafeStr, sizeof(tic.strafeStr));
 
             // turn
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Turn:");
             ImGui::SameLine(50.0f);
             ImGui::SetNextItemWidth(90.0f);
@@ -2210,14 +2335,16 @@ void MainWindow::RenderBRSDialog() {
 
             // fire and use
             const char* triChoices[] = {"No", "Yes"};
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Fire:");
             ImGui::SameLine(50.0f);
             ImGui::SetNextItemWidth(70.0f);
             ImGui::Combo("##fire", &tic.fire, triChoices, 2);
 
-            ImGui::SameLine(175.0f);
+            ImGui::SameLine(165.0f);
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("Use:");
-            ImGui::SameLine(230.0f);
+            ImGui::SameLine(215.0f);
             ImGui::SetNextItemWidth(70.0f);
             ImGui::Combo("##use", &tic.use, triChoices, 2);
         } else {
@@ -2226,47 +2353,67 @@ void MainWindow::RenderBRSDialog() {
 
         // right column
         ImGui::NextColumn();
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Conditions to match on tic:");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(70.0f);
         ImGui::InputInt("##targetTicInput", &m_brsTargetTic, 0, 0);
         ImGui::Separator();
 
-        const char* ops[] = {"=", "!=", ">=", ">", "<=", "<", "Min", "Max"};
-        auto RenderCheckRow = [&](const char* label, BRSCheckItem& item) {
+        const char* ops[] = {"=", "!=", ">=", ">", "<=", "<", "Min", "Max", "acap"};
+        auto RenderCheckRow = [&](const char* label, BRSCheckItem& item, bool allowAcap = false) {
             ImGui::Checkbox(label, &item.active);
-            ImGui::SameLine(85.0f);
+            ImGui::SameLine(105.0f);
             ImGui::PushID(label);
             ImGui::SetNextItemWidth(70.0f);
-            ImGui::Combo("##op", &item.op, ops, 8);
+            ImGui::Combo("##op", &item.op, ops, allowAcap ? 9 : 8);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(95.0f);
+            ImGui::SetNextItemWidth(100.0f);
             ImGui::InputText("##val", item.val, sizeof(item.val));
             ImGui::PopID();
         };
 
         RenderCheckRow("Speed", m_chkSpeed);
         RenderCheckRow("Damage", m_chkDamage);
-        RenderCheckRow("X Pos", m_chkX);
-        RenderCheckRow("Y Pos", m_chkY);
+        RenderCheckRow("X Pos", m_chkX, true);
+        RenderCheckRow("Y Pos", m_chkY, true);
         RenderCheckRow("Z Pos", m_chkZ);
         RenderCheckRow("X Mom", m_chkMomX);
         RenderCheckRow("Y Mom", m_chkMomY);
-		
-		// linedef action check
+        RenderCheckRow("RNG Index", m_chkRng);
+
+        // item check
+        ImGui::Checkbox("Item", &m_chkItem.active);
+        ImGui::SameLine(105.0f);
+        ImGui::PushID("ItemCheck");
+        const char* itemModes[] = { "have", "lack" };
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::Combo("##mode", &m_chkItemMode, itemModes, 2);
+        ImGui::SameLine();
+        const char* itemLabels[] = {
+            "Red Card (rkc)", "Yellow Card (ykc)", "Blue Card (bkc)",
+            "Red Skull (rsk)", "Yellow Skull (ysk)", "Blue Skull (bsk)",
+            "Fist (f)", "Pistol (p)", "Shotgun (sg)", "Chaingun (cg)",
+            "Rocket L. (rl)", "Plasma (pg)", "BFG (bfg)", "Chainsaw (cs)", "SSG (ssg)"
+        };
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::Combo("##item", &m_chkItemIndex, itemLabels, IM_ARRAYSIZE(itemLabels));
+        ImGui::PopID();
+
+        // linedef action check
         ImGui::Checkbox("Linedef", &m_chkLinedef.active);
-        ImGui::SameLine(85.0f);
+        ImGui::SameLine(105.0f);
         ImGui::PushID("LinedefCheck");
         const char* lineTypes[] = {"act", "skip"};
         ImGui::SetNextItemWidth(70.0f);
         ImGui::Combo("##type", &m_chkLinedefType, lineTypes, 2);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(95.0f);
+        ImGui::SetNextItemWidth(100.0f);
         ImGui::InputText("##id", m_chkLinedef.val, sizeof(m_chkLinedef.val));
         ImGui::PopID();
-		
-		// use trigger
-		if (ImGui::Checkbox("Used Switch/Door", &m_chkUse.active)) {
+
+        // use trigger
+        if (ImGui::Checkbox("Used Switch/Door", &m_chkUse.active)) {
             m_chkUse.op = 0; // "=="
             strcpy(m_chkUse.val, "1");
         }
@@ -2278,18 +2425,22 @@ void MainWindow::RenderBRSDialog() {
         // middle: auto-range
         ImGui::Text("Auto-Range Configuration");
 
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("Preset:");
         ImGui::SameLine();
-        const char* presets[] = {"1", "2", "3", "4", "5", "Max Range (Pseudo)", "Max Range (True)"};
-        ImGui::SetNextItemWidth(160.0f);
-        ImGui::Combo("##AutoRangePreset", &m_brsAutoRangePreset, presets, 7);
+        const char* presets[] = {
+            "1", "2", "3", "4", "5",
+            "Max Range (Pseudo)", "Max Range (True)",
+            "lynx 1 (3 tics)", "lynx 2 (3 tics)", "lynx 3 (8-10 tics)"
+        };
+        ImGui::SetNextItemWidth(155.0f);
+        ImGui::Combo("##AutoRangePreset", &m_brsAutoRangePreset, presets, IM_ARRAYSIZE(presets));
 
         ImGui::SameLine();
         ImGui::Checkbox("Avoid Turbo (limit to 50)", &m_avoidTurbo);
 
         ImGui::SameLine();
         if (ImGui::Button("Apply Auto-Ranges to Tics")) {
-            int rad = m_brsAutoRangePreset + 1;
             int runStrafeMax = m_avoidTurbo ? 50 : 127;
             int runStrafeMin = m_avoidTurbo ? -50 : -128;
             int turnMax = 127;
@@ -2299,6 +2450,7 @@ void MainWindow::RenderBRSDialog() {
                 int targetTic = m_brsTics[i].ticNumber;
 
                 if (m_brsAutoRangePreset <= 4) {
+                    int rad = m_brsAutoRangePreset + 1;
                     int r = xdre::getTicRun(targetTic);
                     int s = xdre::getTicStrafe(targetTic);
                     int t = xdre::getTicTurn(targetTic);
@@ -2314,6 +2466,43 @@ void MainWindow::RenderBRSDialog() {
                     strcpy(m_brsTics[i].runStr, "50:-50");
                     strcpy(m_brsTics[i].strafeStr, "50:-50");
                     strcpy(m_brsTics[i].turnStr, "127:-128");
+                } else if (m_brsAutoRangePreset == 7) {
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    int rLow  = (std::max)(runStrafeMin, r - 1);
+                    int rHigh = (std::min)(runStrafeMax, r + 1);
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d:%d",
+                             (r == runStrafeMax) ? rHigh : rLow,
+                             (r == runStrafeMax) ? rLow  : rHigh);
+
+                    int sLow  = (std::max)(runStrafeMin, s - 1);
+                    int sHigh = (std::min)(runStrafeMax, s + 1);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d:%d",
+                             (s == runStrafeMax) ? sHigh : sLow,
+                             (s == runStrafeMax) ? sLow  : sHigh);
+
+                    BRS_CalcAutoRange(t, 8, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                } else if (m_brsAutoRangePreset == 8) {
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    BRS_CalcAutoRange(r, 1, runStrafeMin, runStrafeMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
+                    BRS_CalcAutoRange(s, 1, runStrafeMin, runStrafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
+                    BRS_CalcAutoRange(t, 6, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                } else if (m_brsAutoRangePreset == 9) {
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    r = (std::max)(runStrafeMin, (std::min)(runStrafeMax, r));
+                    s = (std::max)(runStrafeMin, (std::min)(runStrafeMax, s));
+
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d", r);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d", s);
+                    BRS_CalcAutoRange(t, 1, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
                 }
             }
         }
@@ -2329,9 +2518,10 @@ void MainWindow::RenderBRSDialog() {
         maxThreads = (std::max)(maxThreads, static_cast<int>(m_brsThreadGoal));
 
         const float labelWidth = 100.0f;
-        const float fieldWidth = 546.0f;
+        const float fieldWidth = 496.0f;
 
         // threads
+        ImGui::AlignTextToFramePadding();
         ImGui::Text("CPU Workers:");
         ImGui::SameLine(labelWidth);
         ImGui::SetNextItemWidth(fieldWidth);
@@ -2339,6 +2529,7 @@ void MainWindow::RenderBRSDialog() {
 
         // paths and arguments
         auto RenderLeftLabeledInput = [&](const char* label, const char* id, char* buf, size_t bufSize) {
+            ImGui::AlignTextToFramePadding();
             ImGui::Text("%s:", label);
             ImGui::SameLine(labelWidth);
             ImGui::SetNextItemWidth(fieldWidth);

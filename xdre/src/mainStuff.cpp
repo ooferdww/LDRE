@@ -10,6 +10,10 @@
 #include "xdre.hpp"
 #include "MainWindow.hpp"
 
+#ifndef PACKAGE_STRING
+#define PACKAGE_STRING "LDRE beta"
+#endif
+
 extern "C" {
     extern SDL_Window *sdl_window;
 }
@@ -52,7 +56,7 @@ int main(int argc, char** argv) {
 
     // build gui window
     SDL_Window* guiWindow = SDL_CreateWindow(
-        "LDRE v0.4.1 beta",
+        PACKAGE_STRING,
         guiX,
         guiY,
         780,

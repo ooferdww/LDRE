@@ -118,6 +118,13 @@ namespace xdre {
     int getTicTurn(int ticIndex);
 	
 	unsigned int getLevelStartTic();
+	
+	void toggleAutomap();
+    bool getAutomapActive();
+	void toggleAutomapFollow();
+    bool getAutomapFollow();
+	void panAutomap(int dx, int dy);
+	void zoomAutomap(int direction);
 };
 
 

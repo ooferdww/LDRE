@@ -310,9 +310,14 @@ int dsda_ShowAliveMonsters(void) {
 int dsda_reveal_map;
 
 int dsda_RevealAutomap(void) {
+#ifdef XDRE
+  /* force iddtx2 for ldre */
+  return 2;
+#else
   if (dsda_StrictMode()) return 0;
 
   return dsda_reveal_map;
+#endif
 }
 
 void dsda_ResetRevealMap(void) {

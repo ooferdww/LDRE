@@ -66,6 +66,19 @@ extern "C" {
 	extern dboolean BorderNeedRefresh;
 	extern int usedHeader;
     extern int x_longtics;
+	
+	void XDRE_ToggleAutomap(void);
+    int XDRE_GetAutomapActive(void);
+	void AM_Start(dboolean open_full_automap);
+    void AM_Stop(dboolean minimap);
+    extern int automap_full;
+    extern int x_automap_wanted;
+	void XDRE_ToggleAutomapFollow(void);
+    int XDRE_GetAutomapFollow(void);
+	void XDRE_SaveAutomapState(void);
+    void XDRE_RestoreAutomapState(void);
+	void XDRE_DoPanAutomap(int dx, int dy);
+	void XDRE_DoZoomAutomap(int direction);
 } /* extern "C" */
 
 /*
@@ -142,6 +155,13 @@ static ticcmd_t* getActiveTic() {
 void display() {
     if (gamestate == GS_LEVEL) {
         if (players[displayplayer].mo != NULL) {
+            if (x_automap_wanted && !automap_full) {
+                AM_Start(true);
+            } else if (!x_automap_wanted && automap_full) {
+                AM_Stop(false);
+            }
+            XDRE_RestoreAutomapState();
+
             /* recalc hud displays for current player */
             ST_Ticker();
             HU_Ticker();
@@ -378,6 +398,8 @@ void goBack(int numTics) {
     if (numTics < 0) {
         return;
     }
+	
+	XDRE_SaveAutomapState();
 
     int const savedDisplayPlayer = displayplayer;
 
@@ -1444,6 +1466,34 @@ int xdre::getTicTurn(int ticIndex) {
 
 unsigned int xdre::getLevelStartTic() {
     return static_cast<unsigned int>(x_getLevelStartTic());
+}
+
+void xdre::toggleAutomap() {
+    XDRE_ToggleAutomap();
+    display();
+}
+
+bool xdre::getAutomapActive() {
+    return XDRE_GetAutomapActive() != 0;
+}
+
+void xdre::toggleAutomapFollow() {
+    XDRE_ToggleAutomapFollow();
+    display();
+}
+
+bool xdre::getAutomapFollow() {
+    return XDRE_GetAutomapFollow() != 0;
+}
+
+void xdre::panAutomap(int dx, int dy) {
+    XDRE_DoPanAutomap(dx, dy);
+    display();
+}
+
+void xdre::zoomAutomap(int direction) {
+    XDRE_DoZoomAutomap(direction);
+    display();
 }
 
 /* graveyard of currently defunct functions
