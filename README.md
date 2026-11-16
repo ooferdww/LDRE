@@ -1,12 +1,21 @@
 # LDRE
 A highly work in progress demo editor for classic Doom games, used primarily for creating tool-assisted speedruns of the games.
 
-## Build instructions
+## Linux support
+
+* Linux support is work in progress and needs more testing, but you should be able to build a demo.
+* Brute force can be faster on Linux compared to Windows due to bad thread scheduling on Windows.
+* Linux uses a software-rendered GUI instead of the OpenGL GUI available in Windows, it's not a big issue and will be looked into later.
+* Binaries are currently unavailable for Linux until I set up AppImages so you'll need to compile it yourself.
+
+## Compiling instructions
 
 * Windows (Visual Studio 2026)
 
 1. Install LLVM, clang-cl, vcpkg and CMake within Visual Studio Installer.
-2. Run the batch file included in _build_vs, the output will be in source/build/windows-clang/xdre/Release.
+2. Run the batch file included in _build_vs
+3. Choose the build target you want (optimized is ideal) and enable Link-Time Optimization if you want faster brute forcing.
+4. The output will be in source/build/windows-clang/xdre/Release.
 
 * Linux/MSYS2 instructions
 
@@ -68,26 +77,16 @@ mkdir -p build
 Configure with CMake:
 
 ```
-cmake -B build -S . --fresh
+cmake -B build -S . --fresh -DCMAKE_BUILD_TYPE=Release
 ```
 
-Build whole project:
+Build project:
 
 ```
 ninja -C build
 ```
 
-Alternatively only build LDRE:
-
-```
-ninja -C build xdre
-```
-
-Alternatively only build dsda-doom:
-
-```
-ninja -C build dsda-doom
-```
+a build script for Linux will be created soon
 
 ## XDRE heritage
 
