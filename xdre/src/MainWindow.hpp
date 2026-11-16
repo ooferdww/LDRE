@@ -7,7 +7,17 @@
 #include <thread>
 #include <atomic>
 #include <mutex>
+
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/types.h>
+#include <limits.h>
+#ifndef MAX_PATH
+#define MAX_PATH PATH_MAX
+#endif
+#endif
+
 #include "xdre.hpp"
 
 // brs settings
@@ -40,10 +50,14 @@ struct BRSTask {
 
 // worker tracking
 struct BRSWorker {
-    int taskIndex = -1;
-    HANDLE hProcess = NULL;
-    HANDLE hThread = NULL;
-    DWORD pid = 0;
+    int taskIndex;
+#ifdef _WIN32
+    HANDLE hProcess;
+    HANDLE hThread;
+    DWORD pid;
+#else
+    pid_t pid;
+#endif
 };
 
 enum class XCmd {
@@ -62,6 +76,10 @@ enum class XCmd {
 	ToggleAutomapFollow,
 	ZoomAutomapIn,
     ZoomAutomapOut,
+	PanAutomapLeft,
+    PanAutomapRight,
+    PanAutomapUp,
+    PanAutomapDown,
     SetSavepoint,
     UnsetSavepoint,
     Load,
@@ -100,17 +118,17 @@ public:
     void RequestExit() { m_showExitDialog = true; }
     void ForceExit() { m_running = false; }
 
-    XCmd GetCommandForString(const std::string& key) const {
-        auto it = m_stringToCommandMap.find(key);
-        if (it != m_stringToCommandMap.end()) return it->second;
-        return XCmd::None;
+    XCmd GetCommandForString(const std::string& str) const {
+        const auto& activeMap = xdre::getAutomapActive() ? m_automapStringToCommandMap : m_stringToCommandMap;
+        auto it = activeMap.find(str);
+        return (it != activeMap.end()) ? it->second : XCmd::None;
     }
 
-    const std::string& GetStringForConfig(const std::string& configName) const {
-        static const std::string empty;
-        auto it = m_configToStringMap.find(configName);
-        if (it != m_configToStringMap.end()) return it->second;
-        return empty;
+    const std::string& GetStringForConfig(const std::string& action) const {
+        static const std::string emptyStr = "";
+        const auto& activeCfg = xdre::getAutomapActive() ? m_automapConfigToStringMap : m_configToStringMap;
+        auto it = activeCfg.find(action);
+        return (it != activeCfg.end()) ? it->second : emptyStr;
     }
 	
 	// window position properties
@@ -137,11 +155,15 @@ private:
     int m_selectedBRSTic = -1;
     
     // brs engine and path
-    char m_brsExePath[MAX_PATH] = "dsda-doom.exe";
+#ifdef _WIN32
+    char m_brsExePath[512] = "dsda-doom.exe";
+#else
+    char m_brsExePath[512] = "dsda-doom";
+#endif
     char m_brsIwadPath[MAX_PATH] = "";
     char m_brsPwadPath[MAX_PATH] = "";
     char m_brsDemoPath[MAX_PATH] = "";
-    char m_brsExtraArgs[256] = "-bf_quiet -nosound -geom 320x240";
+    char m_brsExtraArgs[256] = "-bf_quiet -nosound -nomusic -nojoy -geom 320x240";
     int m_brsThreadGoal = 0;
     bool m_brsNomo = false;
     int m_brsAutoRangePreset = 2; // Default range 3
@@ -212,6 +234,8 @@ private:
 	bool m_showOptionsDialog = false;
 	bool m_bloodEnabled = false;
     bool m_bloodEditBuffer = false;
+	int m_automapPanSpeed = 2;
+    int m_automapPanSpeedEditBuffer = 2;
 	bool m_invertTicScrub = true;
     bool m_invertTicScrubEditBuffer = true;
     unsigned int m_lastRenderedTic = 0xFFFFFFFF;
@@ -254,6 +278,11 @@ private:
         char buffer[32];
     };
     std::vector<KeyBindEntry> m_keyEditList;
+	
+	// automap controls
+	std::unordered_map<std::string, std::string> m_automapConfigToStringMap;
+    std::unordered_map<std::string, XCmd> m_automapStringToCommandMap;
+    std::vector<KeyBindEntry> m_automapKeyEditList;
 
     // bruteforce engine state
     struct BruteItem {

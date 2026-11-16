@@ -535,27 +535,49 @@ if(WIN32)
     endif()
 endif()
 
+function(dsda_apply_release_opts target_name)
+    if(MSVC)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+            target_compile_options(${target_name} PRIVATE
+                $<$<COMPILE_LANGUAGE:C,CXX>:
+                    $<$<NOT:$<CONFIG:Debug>>:/O2 /Gw /Gy>
+                    ${LDRE_ARCH_FLAGS}
+                    /clang:-fno-strict-aliasing
+                    /clang:-fwrapv
+                >
+            )
+        else()
+            target_compile_options(${target_name} PRIVATE
+                $<$<COMPILE_LANGUAGE:C,CXX>:
+                    $<$<NOT:$<CONFIG:Debug>>:/O2 /Gw /Gy>
+                    ${LDRE_ARCH_FLAGS}
+                >
+            )
+        endif()
+    else()
+        target_compile_options(${target_name} PRIVATE
+            $<$<COMPILE_LANGUAGE:C,CXX>:
+                $<$<NOT:$<CONFIG:Debug>>:-O2 -ftree-vectorize -fomit-frame-pointer>
+                ${LDRE_ARCH_FLAGS}
+                -fno-strict-aliasing
+                -fwrapv
+                -fstack-protector-strong
+            >
+        )
+    endif()
+endfunction()
+
 # Vanilla engine core
 add_library(dsda-doom-core OBJECT ${DSDA_CORE_SOURCES})
 
 dsda_target_set_warnings(dsda-doom-core)
 dsda_target_silence_deprecation(dsda-doom-core)
 dsda_target_enable_fast_math(dsda-doom-core)
+dsda_apply_release_opts(dsda-doom-core)
 
 target_compile_definitions(dsda-doom-core PUBLIC HAVE_CONFIG_H)
 
 target_compile_features(dsda-doom-core PRIVATE cxx_std_11)
-
-if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
-    target_compile_options(dsda-doom-core PRIVATE
-        $<$<COMPILE_LANGUAGE:C,CXX>:
-            -O2
-            -fno-strict-aliasing
-            -fwrapv
-            -fstack-protector-strong
-        >
-    )
-endif()
 
 target_include_directories(dsda-doom-core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -570,21 +592,11 @@ if(BUILD_DSDA_DOOM)
     dsda_target_set_warnings(dsda-doom)
     dsda_target_silence_deprecation(dsda-doom)
     dsda_target_enable_fast_math(dsda-doom)
+    dsda_apply_release_opts(dsda-doom)
 
     target_compile_definitions(dsda-doom PRIVATE HAVE_CONFIG_H)
 
     target_compile_features(dsda-doom PRIVATE cxx_std_11)
-
-    if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
-        target_compile_options(dsda-doom PRIVATE
-            $<$<COMPILE_LANGUAGE:C,CXX>:
-                -O2
-                -fno-strict-aliasing
-                -fwrapv
-                -fstack-protector-strong
-            >
-        )
-    endif()
 
     target_include_directories(dsda-doom PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
@@ -594,9 +606,13 @@ if(BUILD_DSDA_DOOM)
     target_link_libraries(dsda-doom PRIVATE dsda-doom-core)
 
     set_target_properties(dsda-doom PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${DSDA_OUTPUT_PATH}
         C_STANDARD 99
     )
+    if(WIN32)
+        set_target_properties(dsda-doom PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${DSDA_OUTPUT_PATH}"
+        )
+    endif()
 
     add_dependencies(dsda-doom dsda-doom-wad)
     add_custom_command(TARGET dsda-doom POST_BUILD
@@ -640,6 +656,7 @@ add_library(dsda-doom-core-xdre OBJECT ${DSDA_CORE_SOURCES})
 dsda_target_set_warnings(dsda-doom-core-xdre)
 dsda_target_silence_deprecation(dsda-doom-core-xdre)
 dsda_target_enable_fast_math(dsda-doom-core-xdre)
+dsda_apply_release_opts(dsda-doom-core-xdre)
 
 target_compile_definitions(dsda-doom-core-xdre PUBLIC
     HAVE_CONFIG_H
@@ -647,17 +664,6 @@ target_compile_definitions(dsda-doom-core-xdre PUBLIC
 )
 
 target_compile_features(dsda-doom-core-xdre PRIVATE cxx_std_11)
-
-if((CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang") AND NOT MSVC)
-    target_compile_options(dsda-doom-core-xdre PRIVATE
-        $<$<COMPILE_LANGUAGE:C,CXX>:
-            -O2
-            -fno-strict-aliasing
-            -fwrapv
-            -fstack-protector-strong
-        >
-    )
-endif()
 
 target_include_directories(dsda-doom-core-xdre PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

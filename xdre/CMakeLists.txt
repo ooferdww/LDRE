@@ -1,9 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(xdre C CXX)
 
-# opengl and sdl2
-find_package(OpenGL REQUIRED)
+# opengl for windows only, sdl2 for all other platforms
 find_package(SDL2 REQUIRED)
+if(WIN32)
+    find_package(OpenGL REQUIRED)
+endif()
 
 set(XDRE_SOURCES
     # LDRE
@@ -19,10 +21,16 @@ set(XDRE_SOURCES
     imgui/imgui_tables.cpp
     imgui/imgui_widgets.cpp
 
-    # ImGui backends
+    # ImGui SDL2 backend
     imgui/backends/imgui_impl_sdl2.cpp
-    imgui/backends/imgui_impl_opengl3.cpp
 )
+
+# opengl backend for windows, sdl2 for other platforms
+if(WIN32)
+    list(APPEND XDRE_SOURCES imgui/backends/imgui_impl_opengl3.cpp)
+else()
+    list(APPEND XDRE_SOURCES imgui/backends/imgui_impl_sdlrenderer2.cpp)
+endif()
 
 add_executable(xdre
     ${XDRE_SOURCES}
@@ -70,8 +78,8 @@ list(REMOVE_DUPLICATES XDRE_EXPANDED_SDL_INCS)
 
 target_include_directories(xdre PRIVATE
     src
-    src/imgui
-    src/imgui/backends
+    imgui
+    imgui/backends
     ${XDRE_EXPANDED_SDL_INCS}
     ${CMAKE_CURRENT_SOURCE_DIR}/../dsda-doom/prboom2/src
     ${CMAKE_CURRENT_BINARY_DIR}/../dsda-doom/build-config
@@ -79,7 +87,7 @@ target_include_directories(xdre PRIVATE
 
 target_compile_definitions(xdre PRIVATE
     XDRE=1
-    PACKAGE_STRING="LDRE beta v0.5"
+    PACKAGE_STRING="LDRE beta v0.5.1"
     HAVE_CONFIG_H
 )
 
@@ -87,12 +95,16 @@ target_compile_definitions(xdre PRIVATE
 if(MSVC)
     target_compile_definitions(xdre PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_compile_options(xdre PRIVATE
+        $<$<NOT:$<CONFIG:Debug>>:/O2 /Gw /Gy>
+        ${LDRE_ARCH_FLAGS}
         /W3
         /wd4996
         /wd4244
     )
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(xdre PRIVATE
+            /clang:-fno-strict-aliasing
+            /clang:-fwrapv
             /clang:-Wno-unused-parameter
             /clang:-Wno-null-dereference
             /clang:-Wno-array-bounds
@@ -105,8 +117,9 @@ else()
     )
     target_compile_options(xdre PRIVATE
         $<$<COMPILE_LANGUAGE:C,CXX>:
-            -O2
+            $<$<NOT:$<CONFIG:Debug>>:-O2 -ftree-vectorize -fomit-frame-pointer>
             -g
+            ${LDRE_ARCH_FLAGS}
             -fstack-protector-strong
             -fno-strict-aliasing
             -fwrapv
@@ -127,19 +140,51 @@ else()
     endif()
 endif()
 
+if(LDRE_ENABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT _ipo_ok)
+    if(_ipo_ok)
+        set_property(TARGET xdre PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+        foreach(_t dsda-doom-core dsda-doom dsda-doom-core-xdre)
+            if(TARGET ${_t})
+                set_property(TARGET ${_t} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+            endif()
+        endforeach()
+    endif()
+endif()
+
 target_link_libraries(xdre PRIVATE
     dsda-doom-core-xdre
-    OpenGL::GL
     ${XDRE_SDL2_TARGET}
 )
 
 if(WIN32)
-    target_link_libraries(xdre PRIVATE ws2_32 winmm imm32 comdlg32 version setupapi)
+    target_link_libraries(xdre PRIVATE
+        OpenGL::GL
+        ws2_32
+        winmm
+        imm32
+        comdlg32
+        version
+        setupapi
+    )
     if(MSVC)
-        set_target_properties(xdre PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE")
+        set_target_properties(xdre PROPERTIES LINK_FLAGS "/SUBSYSTEM:CONSOLE /OPT:REF /OPT:ICF")
     else()
         set_target_properties(xdre PROPERTIES LINK_FLAGS "-mconsole")
     endif()
+endif()
+
+# build and copy standalone dsda-doom executable alongside xdre for brute forcing
+if(TARGET dsda-doom)
+    add_dependencies(xdre dsda-doom)
+    add_custom_command(TARGET xdre POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:xdre>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:dsda-doom>"
+            "$<TARGET_FILE_DIR:xdre>/$<TARGET_FILE_NAME:dsda-doom>"
+        COMMENT "Copying dsda-doom executable to xdre target directory"
+    )
 endif()
 
 # auto copy wad

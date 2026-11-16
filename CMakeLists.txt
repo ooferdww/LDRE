@@ -25,8 +25,51 @@ set(VCPKG_APPLOCAL_DEPS OFF CACHE BOOL "" FORCE)
 # modular build options
 option(BUILD_DSDA_DOOM "Build standalone dsda-doom executable" ON)
 option(BUILD_XDRE      "Build XDRE TAS editor executable" ON)
+option(LDRE_ENABLE_LTO "Enable Link-Time Optimization in Release builds" OFF)
 
-# static crt config, should be ignored by gnu stuff
+# xdre requires the standalone dsda-doom binary for brute forcing
+if(BUILD_XDRE AND NOT BUILD_DSDA_DOOM)
+    set(BUILD_DSDA_DOOM ON CACHE BOOL "Build standalone dsda-doom executable" FORCE)
+endif()
+
+# CPU target profile:
+#   modern = AVX2+FMA, tuned for znver2 but should run on all Ryzen and Intel Haswell+
+#   compat = no AVX, should be compatible with most 64-bit processors
+#   native = optimized for buildsystem
+set(LDRE_ARCH_PROFILE "modern" CACHE STRING "CPU target profile: modern, compat, or native")
+set_property(CACHE LDRE_ARCH_PROFILE PROPERTY STRINGS "modern" "compat" "native")
+
+set(LDRE_ARCH_FLAGS "")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+    if(MSVC)
+        if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+            # clang-cl
+            if(LDRE_ARCH_PROFILE STREQUAL "modern")
+                set(LDRE_ARCH_FLAGS /clang:-march=x86-64-v3 /clang:-mtune=znver2)
+            elseif(LDRE_ARCH_PROFILE STREQUAL "compat")
+                set(LDRE_ARCH_FLAGS /clang:-march=x86-64 /clang:-mtune=generic)
+            elseif(LDRE_ARCH_PROFILE STREQUAL "native")
+                set(LDRE_ARCH_FLAGS /clang:-march=native)
+            endif()
+        else()
+            # standard MSVC cl.exe
+            if(LDRE_ARCH_PROFILE STREQUAL "modern" OR LDRE_ARCH_PROFILE STREQUAL "native")
+                set(LDRE_ARCH_FLAGS /arch:AVX2)
+            endif()
+        endif()
+    else()
+        # GNU GCC / Clang
+        if(LDRE_ARCH_PROFILE STREQUAL "modern")
+            set(LDRE_ARCH_FLAGS -march=x86-64-v3 -mtune=znver2)
+        elseif(LDRE_ARCH_PROFILE STREQUAL "compat")
+            set(LDRE_ARCH_FLAGS -march=x86-64 -mtune=generic)
+        elseif(LDRE_ARCH_PROFILE STREQUAL "native")
+            set(LDRE_ARCH_FLAGS -march=native)
+        endif()
+    endif()
+endif()
+
+# static crt config, ignored by gnu
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 set(CMAKE_C_STANDARD 99)
@@ -47,6 +90,15 @@ if(MSVC AND (CMAKE_C_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHE
         /clang:-Wno-incompatible-ms-struct
         /clang:-Wno-ignored-attributes
         /clang:-Wno-error=builtin-macro-redefined
+    )
+endif()
+
+# posix / linux compatibility overrides
+if(NOT WIN32)
+    add_compile_definitions(
+        _GNU_SOURCE
+        stricmp=strcasecmp
+        strnicmp=strncasecmp
     )
 endif()
 

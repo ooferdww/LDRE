@@ -1309,10 +1309,12 @@ void I_UpdateVideoMode(void)
     sdl_renderer = SDL_CreateRenderer(sdl_window, -1, flags);
 
     SDL_SetWindowMinimumSize(sdl_window, SCREENWIDTH, ACTUALHEIGHT);
+#ifndef __linux__
     SDL_RenderSetLogicalSize(sdl_renderer, SCREENWIDTH, ACTUALHEIGHT);
 
     // [FG] force integer scales
     SDL_RenderSetIntegerScale(sdl_renderer, integer_scaling);
+#endif
 
     screen = SDL_CreateRGBSurface(0, SCREENWIDTH, SCREENHEIGHT, 8, 0, 0, 0, 0);
     buffer = SDL_CreateRGBSurface(0, SCREENWIDTH, SCREENHEIGHT, 32, 0, 0, 0, 0);

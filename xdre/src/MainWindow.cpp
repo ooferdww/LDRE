@@ -9,6 +9,19 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#else
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <cstdlib>
+#include <cstdio>
+#include <limits.h>
+#include <chrono>
+#include <thread>
 #endif
 
 #include <fstream>
@@ -32,6 +45,17 @@ static std::string GetExeDirectory() {
             return std::string(path);
         }
     }
+#else
+    char path[MAX_PATH] = "";
+    ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    if (len > 0) {
+        path[len] = '\0';
+        char* lastSlash = strrchr(path, '/');
+        if (lastSlash) {
+            *(lastSlash + 1) = '\0';
+            return std::string(path);
+        }
+    }
 #endif
     return "";
 }
@@ -50,6 +74,8 @@ static std::string GetBFBackupDirectory() {
 static void Win32_CreateDirectory(const std::string& path) {
 #ifdef _WIN32
     CreateDirectoryA(path.c_str(), NULL);
+#else
+    mkdir(path.c_str(), 0755);
 #endif
 }
 
@@ -107,6 +133,32 @@ static bool Win32_DeleteDirectoryInternal(const std::string& path) {
     }
     return false;
 #else
+    DIR* dir = opendir(path.c_str());
+    if (!dir) return false;
+
+    bool allDeleted = true;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        std::string itemPath = path + "/" + entry->d_name;
+        struct stat st;
+        if (stat(itemPath.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            if (!Win32_DeleteDirectoryInternal(itemPath)) {
+                allDeleted = false;
+            }
+        } else {
+            if (unlink(itemPath.c_str()) != 0) {
+                allDeleted = false;
+            }
+        }
+    }
+    closedir(dir);
+
+    if (allDeleted) {
+        return (rmdir(path.c_str()) == 0);
+    }
     return false;
 #endif
 }
@@ -117,8 +169,13 @@ static void Win32_DeleteDirectory(const std::string& path) {
 
 // bruteforce iwad/pwad stuff
 static bool FileExists(const std::string& path) {
+#ifdef _WIN32
     DWORD attr = GetFileAttributesA(path.c_str());
     return (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY));
+#else
+    struct stat st;
+    return (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode));
+#endif
 }
 
 static bool HasExtension(const std::string& path, const std::string& ext) {
@@ -157,15 +214,15 @@ void MainWindow::DetectStartupWads(int argc, char** argv) {
                 // If it looks like a standard IWAD name and we have no IWAD yet, treat as IWAD
                 std::string lowerArg = arg;
                 for (char& c : lowerArg) c = (char)tolower((unsigned char)c);
-                if (detectedIwad.empty() && 
-                   (lowerArg.find("doom2.wad") != std::string::npos ||
+                if (detectedIwad.empty() &&
+                    (lowerArg.find("doom2.wad") != std::string::npos ||
                     lowerArg.find("doom.wad") != std::string::npos ||
                     lowerArg.find("plutonia.wad") != std::string::npos ||
                     lowerArg.find("tnt.wad") != std::string::npos)) {
                     detectedIwad = arg;
-                } else {
-                    detectedPwads.push_back(arg);
-                }
+                    } else {
+                        detectedPwads.push_back(arg);
+                    }
             }
         }
     }
@@ -191,6 +248,7 @@ void MainWindow::DetectStartupWads(int argc, char** argv) {
 
         // check DOOMWADDIR if present, probably fails right now
         if (detectedIwad.empty()) {
+#ifdef _WIN32
             char envBuf[MAX_PATH];
             DWORD res = GetEnvironmentVariableA("DOOMWADDIR", envBuf, MAX_PATH);
             if (res > 0 && res < MAX_PATH) {
@@ -203,6 +261,19 @@ void MainWindow::DetectStartupWads(int argc, char** argv) {
                     }
                 }
             }
+#else
+            const char* envVal = std::getenv("DOOMWADDIR");
+            if (envVal && envVal[0] != '\0') {
+                std::string envDir = envVal;
+                if (envDir.back() != '/') envDir += "/";
+                for (const char* name : commonIwads) {
+                    if (FileExists(envDir + name)) {
+                        detectedIwad = envDir + name;
+                        break;
+                    }
+                }
+            }
+#endif
         }
     }
 
@@ -353,44 +424,59 @@ void MainWindow::RenderExitDialog() {
     }
 }
 
-void MainWindow::SetKeys() {
-    m_stringToCommandMap.clear();
-    for (auto const& pair : m_configToStringMap) {
-        if (pair.first == "Fire")                m_stringToCommandMap[pair.second] = XCmd::Fire;
-        else if (pair.first == "Use")            m_stringToCommandMap[pair.second] = XCmd::Use;
-        else if (pair.first == "TurnStepLeft")   m_stringToCommandMap[pair.second] = XCmd::TurnStepLeft;
-        else if (pair.first == "TurnStepRight")  m_stringToCommandMap[pair.second] = XCmd::TurnStepRight;
-        else if (pair.first == "TurnStep")       m_stringToCommandMap[pair.second] = XCmd::TurnStep;
-        else if (pair.first == "PrevTic")        m_stringToCommandMap[pair.second] = XCmd::PrevTic;
-        else if (pair.first == "NextTic")        m_stringToCommandMap[pair.second] = XCmd::NextTic;
-        else if (pair.first == "CopyTic")        m_stringToCommandMap[pair.second] = XCmd::CopyTic;
-        else if (pair.first == "DeleteTic")      m_stringToCommandMap[pair.second] = XCmd::DeleteTic;
-        else if (pair.first == "NewTic")         m_stringToCommandMap[pair.second] = XCmd::NewTic;
-        else if (pair.first == "ToggleBlood")    m_stringToCommandMap[pair.second] = XCmd::ToggleBlood;
-		else if (pair.first == "ToggleAutomap")  m_stringToCommandMap[pair.second] = XCmd::ToggleAutomap;
-		else if (pair.first == "ToggleAutomapFollow") m_stringToCommandMap[pair.second] = XCmd::ToggleAutomapFollow;
-		else if (pair.first == "ZoomAutomapIn")       m_stringToCommandMap[pair.second] = XCmd::ZoomAutomapIn;
-        else if (pair.first == "ZoomAutomapOut")      m_stringToCommandMap[pair.second] = XCmd::ZoomAutomapOut;
-        else if (pair.first == "SetSavepoint")   m_stringToCommandMap[pair.second] = XCmd::SetSavepoint;
-        else if (pair.first == "UnsetSavepoint") m_stringToCommandMap[pair.second] = XCmd::UnsetSavepoint;
-        else if (pair.first == "Load")           m_stringToCommandMap[pair.second] = XCmd::Load;
-        else if (pair.first == "Save")           m_stringToCommandMap[pair.second] = XCmd::Save;
-        else if (pair.first == "Exit")           m_stringToCommandMap[pair.second] = XCmd::Exit;
-        else if (pair.first == "RunBwd")         m_stringToCommandMap[pair.second] = XCmd::RunBwd;
-        else if (pair.first == "RunFwd")         m_stringToCommandMap[pair.second] = XCmd::RunFwd;
-        else if (pair.first == "StrafeLeft")     m_stringToCommandMap[pair.second] = XCmd::StrafeLeft;
-        else if (pair.first == "StrafeRight")    m_stringToCommandMap[pair.second] = XCmd::StrafeRight;
-        else if (pair.first == "TurnLeft")       m_stringToCommandMap[pair.second] = XCmd::TurnLeft;
-        else if (pair.first == "TurnRight")      m_stringToCommandMap[pair.second] = XCmd::TurnRight;
-        else if (pair.first == "Weapon")         m_stringToCommandMap[pair.second] = XCmd::Weapon;
-        else if (pair.first == "TransposeLeft")  m_stringToCommandMap[pair.second] = XCmd::TransposeLeft;
-        else if (pair.first == "TransposeRight") m_stringToCommandMap[pair.second] = XCmd::TransposeRight;
-        else if (pair.first == "CopyTicX")       m_stringToCommandMap[pair.second] = XCmd::CopyTicX;
-        else if (pair.first == "DeleteTicX")     m_stringToCommandMap[pair.second] = XCmd::DeleteTicX;
-        else if (pair.first == "BackwardDemo")   m_stringToCommandMap[pair.second] = XCmd::BackwardDemo;
-        else if (pair.first == "ForwardDemo")    m_stringToCommandMap[pair.second] = XCmd::ForwardDemo;
-        else if (pair.first == "ChangePlayer")   m_stringToCommandMap[pair.second] = XCmd::ChangePlayer;
+static void BuildCommandMap(const std::unordered_map<std::string, std::string>& cfgMap,
+                            std::unordered_map<std::string, XCmd>& outCmdMap) {
+    outCmdMap.clear();
+    for (auto const& pair : cfgMap) {
+        if (pair.second.empty()) continue;
+
+        if (pair.first == "Fire")                     outCmdMap[pair.second] = XCmd::Fire;
+        else if (pair.first == "Use")                 outCmdMap[pair.second] = XCmd::Use;
+        else if (pair.first == "TurnStepLeft")        outCmdMap[pair.second] = XCmd::TurnStepLeft;
+        else if (pair.first == "TurnStepRight")       outCmdMap[pair.second] = XCmd::TurnStepRight;
+        else if (pair.first == "TurnStep")            outCmdMap[pair.second] = XCmd::TurnStep;
+        else if (pair.first == "PrevTic")             outCmdMap[pair.second] = XCmd::PrevTic;
+        else if (pair.first == "NextTic")             outCmdMap[pair.second] = XCmd::NextTic;
+        else if (pair.first == "CopyTic")             outCmdMap[pair.second] = XCmd::CopyTic;
+        else if (pair.first == "DeleteTic")           outCmdMap[pair.second] = XCmd::DeleteTic;
+        else if (pair.first == "NewTic")              outCmdMap[pair.second] = XCmd::NewTic;
+        else if (pair.first == "ToggleBlood")         outCmdMap[pair.second] = XCmd::ToggleBlood;
+        else if (pair.first == "ToggleAutomap")       outCmdMap[pair.second] = XCmd::ToggleAutomap;
+        else if (pair.first == "ToggleAutomapFollow") outCmdMap[pair.second] = XCmd::ToggleAutomapFollow;
+        else if (pair.first == "ZoomAutomapIn")       outCmdMap[pair.second] = XCmd::ZoomAutomapIn;
+        else if (pair.first == "ZoomAutomapOut")      outCmdMap[pair.second] = XCmd::ZoomAutomapOut;
+        else if (pair.first == "PanAutomapLeft")      outCmdMap[pair.second] = XCmd::PanAutomapLeft;
+        else if (pair.first == "PanAutomapRight")     outCmdMap[pair.second] = XCmd::PanAutomapRight;
+        else if (pair.first == "PanAutomapUp")        outCmdMap[pair.second] = XCmd::PanAutomapUp;
+        else if (pair.first == "PanAutomapDown")      outCmdMap[pair.second] = XCmd::PanAutomapDown;
+        else if (pair.first == "SetSavepoint")        outCmdMap[pair.second] = XCmd::SetSavepoint;
+        else if (pair.first == "UnsetSavepoint")      outCmdMap[pair.second] = XCmd::UnsetSavepoint;
+        else if (pair.first == "Load")                outCmdMap[pair.second] = XCmd::Load;
+        else if (pair.first == "Save")                outCmdMap[pair.second] = XCmd::Save;
+        else if (pair.first == "Exit")                outCmdMap[pair.second] = XCmd::Exit;
+        else if (pair.first == "RunBwd")              outCmdMap[pair.second] = XCmd::RunBwd;
+        else if (pair.first == "RunFwd")              outCmdMap[pair.second] = XCmd::RunFwd;
+        else if (pair.first == "StrafeLeft")          outCmdMap[pair.second] = XCmd::StrafeLeft;
+        else if (pair.first == "StrafeRight")         outCmdMap[pair.second] = XCmd::StrafeRight;
+        else if (pair.first == "TurnLeft")            outCmdMap[pair.second] = XCmd::TurnLeft;
+        else if (pair.first == "TurnRight")           outCmdMap[pair.second] = XCmd::TurnRight;
+        else if (pair.first == "Weapon")              outCmdMap[pair.second] = XCmd::Weapon;
+        else if (pair.first == "TransposeLeft")       outCmdMap[pair.second] = XCmd::TransposeLeft;
+        else if (pair.first == "TransposeRight")      outCmdMap[pair.second] = XCmd::TransposeRight;
+        else if (pair.first == "CopyTicX")            outCmdMap[pair.second] = XCmd::CopyTicX;
+        else if (pair.first == "DeleteTicX")          outCmdMap[pair.second] = XCmd::DeleteTicX;
+        else if (pair.first == "BackwardDemo")        outCmdMap[pair.second] = XCmd::BackwardDemo;
+        else if (pair.first == "ForwardDemo")         outCmdMap[pair.second] = XCmd::ForwardDemo;
+        else if (pair.first == "ChangePlayer")        outCmdMap[pair.second] = XCmd::ChangePlayer;
     }
+}
+
+void MainWindow::SetKeys() {
+    // keep toggleautomap synced between both control sets
+    m_automapConfigToStringMap["ToggleAutomap"] = m_configToStringMap["ToggleAutomap"];
+
+    BuildCommandMap(m_configToStringMap, m_stringToCommandMap);
+    BuildCommandMap(m_automapConfigToStringMap, m_automapStringToCommandMap);
 }
 
 void MainWindow::LoadConfig() {
@@ -400,7 +486,7 @@ void MainWindow::LoadConfig() {
     const char* keyNames[] = {
         "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
         "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-        "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+        "ToggleBlood", "ToggleAutomap",
         "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
         "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
         "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
@@ -409,7 +495,7 @@ void MainWindow::LoadConfig() {
     const char* defaults[] = {
         "f", "u", "-", "+", "ts",
         "j", "i", "c", "x", "n",
-        "z", "m", "k", "l", "o",
+        "z", "m",
         "ssp", "pss", "load", "save", "exit",
         "wq", "we", "sa", "sd", "re", "rt",
         "g", "tr", "ty", "tc", "tx",
@@ -420,11 +506,40 @@ void MainWindow::LoadConfig() {
     for (size_t i = 0; i < sizeof(keyNames)/sizeof(keyNames[0]); ++i) {
         m_configToStringMap[keyNames[i]] = IniRead(keyNames[i], defaults[i]);
     }
+	
+	// automap mode binds
+    const char* automapKeyNames[] = {
+        "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
+        "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
+        "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+        "PanAutomapUp", "PanAutomapLeft", "PanAutomapDown", "PanAutomapRight",
+        "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+        "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
+        "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
+        "BackwardDemo", "ForwardDemo", "ChangePlayer"
+    };
+    const char* automapDefaults[] = {
+        "k", "u", "-", "+", "ts",
+        "j", "i", "c", "x", "n",
+        "z", "m", "f", "l", "o",
+        "w", "a", "s", "d",
+        "ssp", "pss", "load", "save", "exit",
+        "bq", "be", "pg", "ph", "re", "rt",
+        "g", "tr", "ty", "tc", "tx",
+        ",", ".", "v"
+    };
+
+    m_automapConfigToStringMap.clear();
+    for (size_t i = 0; i < sizeof(automapKeyNames)/sizeof(automapKeyNames[0]); ++i) {
+        std::string iniKey = std::string("Automap_") + automapKeyNames[i];
+        m_automapConfigToStringMap[automapKeyNames[i]] = IniRead(iniKey, automapDefaults[i]);
+    }
 
     m_selectedAngleType = std::stoi(IniRead("AngleType", "3"));
     m_selectedSavepointStyle = std::stoi(IniRead("SavepointMode", "1"));
     m_lastDirectory = IniRead("LastDirectory", ".");
     m_bloodEnabled = (std::stoi(IniRead("Blood", "0")) != 0);
+	m_automapPanSpeed = (std::max)(1, std::stoi(IniRead("AutomapPanSpeed", "2")));
 	m_invertTicScrub = (std::stoi(IniRead("InvertTicScrub", "1")) != 0);
 	m_brsAutoLoadResult = (std::stoi(IniRead("BRSAutoLoadResult", "1")) != 0);
 	m_brsThreadGoal = std::stoi(IniRead("BRSThreadGoal", "0"));
@@ -444,12 +559,18 @@ void MainWindow::WriteConfig() {
     for (auto const& pair : m_configToStringMap) {
         IniWrite(pair.first, pair.second);
     }
+	
+	// write automap mode binds
+    for (auto const& pair : m_automapConfigToStringMap) {
+        IniWrite(std::string("Automap_") + pair.first, pair.second);
+    }
 
     // write ui states
     IniWrite("AngleType", std::to_string(m_selectedAngleType));
     IniWrite("SavepointMode", std::to_string(m_selectedSavepointStyle));
     IniWrite("LastDirectory", m_lastDirectory);
     IniWrite("Blood", m_bloodEnabled ? "1" : "0");
+	IniWrite("AutomapPanSpeed", std::to_string(m_automapPanSpeed));
 	IniWrite("InvertTicScrub", m_invertTicScrub ? "1" : "0");
 	IniWrite("BRSAutoLoadResult", m_brsAutoLoadResult ? "1" : "0");
 	IniWrite("BRSThreadGoal", std::to_string(m_brsThreadGoal));
@@ -483,6 +604,10 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
 		case XCmd::ToggleAutomapFollow: xdre::toggleAutomapFollow(); break;
 		case XCmd::ZoomAutomapIn:       xdre::zoomAutomap(1);        break;
         case XCmd::ZoomAutomapOut:      xdre::zoomAutomap(-1);       break;
+		case XCmd::PanAutomapLeft:      xdre::panAutomap(-m_automapPanSpeed, 0);     break;
+        case XCmd::PanAutomapRight:     xdre::panAutomap(m_automapPanSpeed, 0);      break;
+        case XCmd::PanAutomapUp:        xdre::panAutomap(0, m_automapPanSpeed);      break;
+        case XCmd::PanAutomapDown:      xdre::panAutomap(0, -m_automapPanSpeed);     break;
         case XCmd::SetSavepoint:  xdre::setSavepoint();          break;
         case XCmd::UnsetSavepoint:xdre::unsetSavepoint();        break;
         case XCmd::Load:          LoadReplayFile();              break;
@@ -533,13 +658,13 @@ void MainWindow::ProcessInputField(const char* inputStr) {
         }
     }
 
-    auto cmdIt = m_stringToCommandMap.find(strCmd);
-    if (cmdIt == m_stringToCommandMap.end()) return;
+    XCmd cmd = GetCommandForString(strCmd);
+    if (cmd == XCmd::None) return;
 
     // cmds that require numeric arg must have one
-    if (cmdIt->second >= XCmd::RunBwd && !hasNum) return;
+    if (cmd >= XCmd::RunBwd && !hasNum) return;
 
-    DoInput(cmdIt->second, static_cast<unsigned int>(val));
+    DoInput(cmd, static_cast<unsigned int>(val));
     m_inputBuffer[0] = '\0';
 }
 
@@ -638,8 +763,9 @@ void MainWindow::RenderMenuBar() {
 			
 			if (ImGui::MenuItem("Options...")) {
                 m_bloodEditBuffer = xdre::getBlood();
-				m_invertTicScrubEditBuffer = m_invertTicScrub;
-				m_brsAutoLoadResultEditBuffer = m_brsAutoLoadResult;
+                m_invertTicScrubEditBuffer = m_invertTicScrub;
+                m_brsAutoLoadResultEditBuffer = m_brsAutoLoadResult;
+                m_automapPanSpeedEditBuffer = m_automapPanSpeed;
                 m_showOptionsDialog = true;
             }
 			
@@ -648,7 +774,7 @@ void MainWindow::RenderMenuBar() {
                 const char* keyNames[] = {
                     "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
                     "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-                    "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+                    "ToggleBlood", "ToggleAutomap", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
                     "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
                     "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
                     "BackwardDemo", "ForwardDemo", "ChangePlayer"
@@ -661,6 +787,27 @@ void MainWindow::RenderMenuBar() {
                     std::strncpy(entry.buffer, currentVal.c_str(), sizeof(entry.buffer) - 1);
                     m_keyEditList.push_back(entry);
                 }
+
+                m_automapKeyEditList.clear();
+                const char* automapKeyNames[] = {
+                    "PanAutomapUp", "PanAutomapLeft", "PanAutomapDown", "PanAutomapRight",
+                    "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+                    "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
+                    "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
+                    "ToggleBlood", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+                    "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
+                    "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
+                    "BackwardDemo", "ForwardDemo", "ChangePlayer"
+                };
+                for (const char* name : automapKeyNames) {
+                    KeyBindEntry entry;
+                    entry.actionName = name;
+                    std::string currentVal = m_automapConfigToStringMap[name];
+                    std::memset(entry.buffer, 0, sizeof(entry.buffer));
+                    std::strncpy(entry.buffer, currentVal.c_str(), sizeof(entry.buffer) - 1);
+                    m_automapKeyEditList.push_back(entry);
+                }
+
                 m_showKeysDialog = true;
             }
 
@@ -1013,24 +1160,6 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
         return 0;
     }
 
-    // automap navigation handling
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && xdre::getAutomapActive()) {
-            const Uint8* state = SDL_GetKeyboardState(NULL);
-            int dx = 0;
-            int dy = 0;
-            if (state[SDL_SCANCODE_LEFT])  dx -= 1;
-            if (state[SDL_SCANCODE_RIGHT]) dx += 1;
-            if (state[SDL_SCANCODE_UP])    dy += 1;
-            if (state[SDL_SCANCODE_DOWN])  dy -= 1;
-
-            if (dx != 0 || dy != 0) {
-                xdre::panAutomap(dx, dy);
-            }
-        }
-        return 0;
-    }
-
     // single char interceptor
     if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) {
         ImWchar c = data->EventChar;
@@ -1046,9 +1175,6 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
 
         // if char maps to non-numeric command, execute
         if (cmd != XCmd::None && cmd <= XCmd::Exit) {
-            if ((cmd == XCmd::ZoomAutomapIn || cmd == XCmd::ZoomAutomapOut) && !xdre::getAutomapActive()) {
-                return 0; // pass through to buffer when automap is closed
-            }
             window->DoInput(cmd, 0);
             return 1; // discard char
         }
@@ -1069,12 +1195,10 @@ static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
         // check word bindings
         XCmd cmd = window->GetCommandForString(lowerBuf);
         if (cmd != XCmd::None && cmd <= XCmd::Exit) {
-            if ((cmd == XCmd::ZoomAutomapIn || cmd == XCmd::ZoomAutomapOut) && !xdre::getAutomapActive()) {
-                return 0; // do not consume 'l' or 'o' while typing words like "load"
-            }
             window->DoInput(cmd, 0);
             executed = true;
         }
+		
         // weapon prefix
         else {
             const std::string& weaponKey = window->GetStringForConfig("Weapon");
@@ -1190,11 +1314,6 @@ void MainWindow::RenderGeneralSection() {
 
         bool enterPressed = ImGui::InputText("##CommandLineInput", m_inputBuffer, sizeof(m_inputBuffer), flags, InputUnifiedCallback, this);
 
-        if (ImGui::IsItemActive()) {
-            ImGui::SetItemKeyOwner(ImGuiKey_UpArrow);
-            ImGui::SetItemKeyOwner(ImGuiKey_DownArrow);
-        }
-
         bool submitCommand = (s_spaceCommandTriggered || enterPressed);
         s_spaceCommandTriggered = false;
 
@@ -1242,6 +1361,66 @@ std::string MainWindow::OpenNativeFileDialog(bool isSave) {
         if (GetOpenFileNameA(&ofn)) {
             std::string path(filename);
             size_t lastSlash = path.find_last_of("\\/");
+            if (lastSlash != std::string::npos) {
+                m_lastDirectory = path.substr(0, lastSlash);
+                WriteConfig();
+            }
+            return path;
+        }
+    }
+#else
+    char resolvedBuf[PATH_MAX] = "";
+    std::string rawDir = m_lastDirectory.empty() ? "." : m_lastDirectory;
+    std::string initDir;
+    if (realpath(rawDir.c_str(), resolvedBuf) != nullptr) {
+        initDir = resolvedBuf;
+    } else {
+        initDir = GetExeDirectory();
+        if (initDir.empty()) initDir = ".";
+    }
+    if (initDir.back() != '/') initDir += '/';
+
+    auto runDialogCmd = [](const std::string& cmd, char* outBuf, size_t outSize) -> bool {
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) return false;
+        bool gotLine = (fgets(outBuf, static_cast<int>(outSize), pipe) != nullptr);
+        int status = pclose(pipe);
+        return (gotLine && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    };
+
+    const char* desktop = std::getenv("XDG_CURRENT_DESKTOP");
+    std::string desktopStr = desktop ? desktop : "";
+    for (char& c : desktopStr) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    bool hasKdialog = (system("command -v kdialog >/dev/null 2>&1") == 0);
+    bool hasZenity  = (system("command -v zenity >/dev/null 2>&1") == 0);
+    bool preferZenity = (desktopStr.find("gnome") != std::string::npos && hasZenity);
+
+    bool ok = false;
+    if (hasKdialog && !preferZenity) {
+        std::string kdialogCmd = isSave
+        ? ("kdialog --title \"Save Demo\" --getsavefilename \"" + initDir + "demo.lmp\" \"*.lmp|Doom Demo Files (*.lmp)\" 2>/dev/null")
+        : ("kdialog --title \"Load Demo\" --getopenfilename \"" + initDir + "\" \"*.lmp|Doom Demo Files (*.lmp)\" 2>/dev/null");
+        ok = runDialogCmd(kdialogCmd, filename, sizeof(filename));
+    } else if (hasZenity) {
+        std::string zenityCmd = isSave
+        ? ("zenity --file-selection --save --confirm-overwrite --title=\"Save Demo\" --filename=\"" + initDir + "demo.lmp\" --file-filter=\"Doom Demo Files (*.lmp) | *.lmp\" --file-filter=\"All Files | *\" 2>/dev/null")
+        : ("zenity --file-selection --title=\"Load Demo\" --filename=\"" + initDir + "\" --file-filter=\"Doom Demo Files (*.lmp) | *.lmp\" --file-filter=\"All Files | *\" 2>/dev/null");
+        ok = runDialogCmd(zenityCmd, filename, sizeof(filename));
+    }
+
+    if (ok) {
+        std::string path(filename);
+        while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) {
+            path.pop_back();
+        }
+        if (!path.empty()) {
+            if (isSave && path.find('.') == std::string::npos) {
+                path += ".lmp";
+            }
+            size_t lastSlash = path.find_last_of('/');
             if (lastSlash != std::string::npos) {
                 m_lastDirectory = path.substr(0, lastSlash);
                 WriteConfig();
@@ -1398,39 +1577,67 @@ void MainWindow::RenderKeysDialog() {
     }
 
     if (ImGui::BeginPopupModal("Configure Keys", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Bind actions to text command shortcuts:");
+        ImGui::Text("Bind actions to text command shortcuts (leave blank to unbind):");
         ImGui::Separator();
 
-        ImGui::BeginChild("KeyScrollBox", ImVec2(520, 360), true);
-        ImGui::Columns(3, "KeysColumns", true);
+        ImGui::BeginChild("KeyScrollBox", ImVec2(560, 420), true);
 
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Main Controls");
+        ImGui::Separator();
+        ImGui::Columns(3, "MainKeysColumns", true);
         for (size_t i = 0; i < m_keyEditList.size(); ++i) {
             auto& item = m_keyEditList[i];
-
             ImGui::Text("%s", item.actionName.c_str());
             ImGui::PushID(static_cast<int>(i));
             ImGui::SetNextItemWidth(70.0f);
             ImGui::InputText("##key", item.buffer, sizeof(item.buffer));
             ImGui::PopID();
-
-            if ((i + 1) % 11 == 0) {
-                ImGui::NextColumn();
-            }
+            ImGui::NextColumn();
         }
         ImGui::Columns(1);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.6f, 1.0f), "Controls while Automap is enabled (ToggleAutomap is shared)");
+        ImGui::Separator();
+        ImGui::Columns(3, "AutomapKeysColumns", true);
+        for (size_t i = 0; i < m_automapKeyEditList.size(); ++i) {
+            auto& item = m_automapKeyEditList[i];
+            ImGui::Text("%s", item.actionName.c_str());
+            ImGui::PushID(static_cast<int>(1000 + i));
+            ImGui::SetNextItemWidth(70.0f);
+            ImGui::InputText("##amkey", item.buffer, sizeof(item.buffer));
+            ImGui::PopID();
+            ImGui::NextColumn();
+        }
+        ImGui::Columns(1);
+
         ImGui::EndChild();
 
         ImGui::Separator();
         if (ImGui::Button("Save & Apply", ImVec2(140, 0))) {
-            for (auto const& item : m_keyEditList) {
-                std::string s(item.buffer);
-                s.erase(0, s.find_first_not_of(" \t\r\n"));
-                s.erase(s.find_last_not_of(" \t\r\n") + 1);
+            auto TrimLower = [](const char* raw) {
+                std::string s(raw);
+                size_t first = s.find_first_not_of(" \t\r\n");
+                if (first == std::string::npos) return std::string("");
+                size_t last = s.find_last_not_of(" \t\r\n");
+                s = s.substr(first, last - first + 1);
                 for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                return s;
+            };
 
+            for (auto const& item : m_keyEditList) {
+                std::string s = TrimLower(item.buffer);
                 if (!s.empty()) {
                     m_configToStringMap[item.actionName] = s;
                 }
+            }
+
+            for (auto const& item : m_automapKeyEditList) {
+                // allow empty strings for unbinding
+                m_automapConfigToStringMap[item.actionName] = TrimLower(item.buffer);
             }
 
             WriteConfig();
@@ -1461,11 +1668,19 @@ void MainWindow::RenderOptionsDialog() {
         ImGui::Checkbox("Direct scrollwheel tic switching (hold RMB to scroll list)", &m_invertTicScrubEditBuffer);
         ImGui::Checkbox("Auto-load winning brute-force demo into editor", &m_brsAutoLoadResultEditBuffer);
 
+        ImGui::Spacing();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Automap pan speed:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderInt("##AutomapPanSpeed", &m_automapPanSpeedEditBuffer, 1, 10, "%dx");
+
         ImGui::Separator();
         if (ImGui::Button("Save & Apply", ImVec2(120, 0))) {
             m_bloodEnabled = m_bloodEditBuffer;
             m_invertTicScrub = m_invertTicScrubEditBuffer;
             m_brsAutoLoadResult = m_brsAutoLoadResultEditBuffer;
+            m_automapPanSpeed = (std::max)(1, m_automapPanSpeedEditBuffer);
 
             if (xdre::getBlood() != m_bloodEnabled) {
                 xdre::toggleBlood();
@@ -1517,6 +1732,7 @@ void MainWindow::CleanupBRSArtifacts(int winningIndex) {
 
     // if a winner's found, preserve it in bf_backup
     if (winningIndex >= 0) {
+#ifdef _WIN32
         std::string srcDemo = bfDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
         std::string dstDemo = backupDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
 
@@ -1527,6 +1743,22 @@ void MainWindow::CleanupBRSArtifacts(int winningIndex) {
             }
             Sleep(20);
         }
+#else
+        std::string srcDemo = bfDir + "/outputdemo" + std::to_string(winningIndex) + ".lmp";
+        std::string dstDemo = backupDir + "/outputdemo" + std::to_string(winningIndex) + ".lmp";
+
+        for (int retry = 0; retry < 5; ++retry) {
+            std::ifstream src(srcDemo, std::ios::binary);
+            if (src.is_open()) {
+                std::ofstream dst(dstDemo, std::ios::binary | std::ios::trunc);
+                if (dst.is_open()) {
+                    dst << src.rdbuf();
+                    break;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+#endif
     }
 
     // erase temp folder
@@ -1700,10 +1932,41 @@ static std::vector<std::vector<std::string>> BRS_ProduceFinalCombinations(
     return finalCombinations;
 }
 
+#ifndef _WIN32
+static std::vector<std::string> SplitCommandLinePosix(const std::string& cmd) {
+    std::vector<std::string> args;
+    std::string current;
+    bool inQuotes = false;
+
+    for (size_t i = 0; i < cmd.size(); ++i) {
+        char c = cmd[i];
+        if (c == '"') {
+            inQuotes = !inQuotes;
+        } else if (!inQuotes && std::isspace(static_cast<unsigned char>(c))) {
+            if (!current.empty()) {
+                args.push_back(current);
+                current.clear();
+            }
+        } else {
+            current.push_back(c);
+        }
+    }
+    if (!current.empty()) {
+        args.push_back(current);
+    }
+    return args;
+}
+#endif
+
 void MainWindow::BRSWorkerThread() {
     // force headless sdl drivers for dsda processes
+#ifdef _WIN32
     SetEnvironmentVariableA("SDL_VIDEODRIVER", "dummy");
     SetEnvironmentVariableA("SDL_AUDIODRIVER", "dummy");
+#else
+    setenv("SDL_VIDEODRIVER", "dummy", 1);
+    setenv("SDL_AUDIODRIVER", "dummy", 1);
+#endif
 
     // earliest tic first
     auto ticsAscending = m_brsTics;
@@ -1724,14 +1987,14 @@ void MainWindow::BRSWorkerThread() {
     // combination calculator
     long long totalCombinations = 1;
     for (const auto& tic : ticsAscending) {
-    totalCombinations *= (std::max)(1, tic.runSize);
-    totalCombinations *= (std::max)(1, tic.strafeSize);
-    totalCombinations *= (std::max)(1, tic.turnSize);
+        totalCombinations *= (std::max)(1, tic.runSize);
+        totalCombinations *= (std::max)(1, tic.strafeSize);
+        totalCombinations *= (std::max)(1, tic.turnSize);
     }
 
     int targetMultiplier = 16;
     if (totalCombinations < static_cast<long long>(numWorkers) * targetMultiplier) {
-    targetMultiplier = (std::max)(1, static_cast<int>(totalCombinations / numWorkers));
+        targetMultiplier = (std::max)(1, static_cast<int>(totalCombinations / numWorkers));
     }
     int desiredTarget = numWorkers * targetMultiplier;
 
@@ -1775,8 +2038,8 @@ void MainWindow::BRSWorkerThread() {
     int complevel = GetSelectedComplevel();
     int baseTic   = ticsAscending.empty() ? 0 : ticsAscending.front().ticNumber;
     int endTic    = ticsAscending.empty() ? 0 : ticsAscending.back().ticNumber;
-	
-	// fetch active map and episode from ldre
+
+    // fetch active map and episode from ldre
     int currentOptions[28] = { 0 };
     xdre::getOptions(currentOptions);
     int curEpisode = currentOptions[2];
@@ -1819,7 +2082,7 @@ void MainWindow::BRSWorkerThread() {
             std::string turnSlice   = finalCombinations[i][comboIdx++];
 
             sliceLine += "bf.frame " + std::to_string(frameOffset) + " "
-                      + runSlice + " " + strafeSlice + " " + turnSlice;
+            + runSlice + " " + strafeSlice + " " + turnSlice;
 
             // combine into single token
             std::string flags = "";
@@ -1875,9 +2138,8 @@ void MainWindow::BRSWorkerThread() {
     AppendCond(m_chkZ, "z");
     AppendCond(m_chkMomX, "vx");
     AppendCond(m_chkMomY, "vy");
-	AppendCond(m_chkUse, "use");
-	
-	AppendCond(m_chkRng, "rng");
+    AppendCond(m_chkUse, "use");
+    AppendCond(m_chkRng, "rng");
 
     if (m_chkItem.active) {
         const char* itemCodes[] = {
@@ -1915,12 +2177,20 @@ void MainWindow::BRSWorkerThread() {
         }
     }
 
+    auto IsRelativePath = [](const std::string& p) -> bool {
+#ifdef _WIN32
+        return (p.find(":\\") == std::string::npos && p.find(":/") == std::string::npos);
+#else
+        return (!p.empty() && p[0] != '/');
+#endif
+    };
+
     // assemble task cmds
     std::vector<BRSTask> taskQueue;
     for (int w = 0; w < actualWorkers; ++w) {
         // resolve absolute path
         std::string exePath = m_brsExePath;
-        if (exePath.find(":\\") == std::string::npos && exePath.find(":/") == std::string::npos) {
+        if (IsRelativePath(exePath)) {
             exePath = GetExeDirectory() + exePath;
         }
 
@@ -1928,7 +2198,7 @@ void MainWindow::BRSWorkerThread() {
 
         if (strlen(m_brsIwadPath) > 0) {
             std::string iwad = m_brsIwadPath;
-            if (iwad.find(":\\") == std::string::npos && iwad.find(":/") == std::string::npos)
+            if (IsRelativePath(iwad))
                 iwad = GetExeDirectory() + iwad;
             cmd += "-iwad \"" + iwad + "\" ";
         }
@@ -1938,7 +2208,7 @@ void MainWindow::BRSWorkerThread() {
             if (pwadStr.front() == '"' || pwadStr.find(' ') != std::string::npos) {
                 cmd += "-file " + pwadStr + " ";
             } else {
-                if (pwadStr.find(":\\") == std::string::npos && pwadStr.find(":/") == std::string::npos)
+                if (IsRelativePath(pwadStr))
                     pwadStr = GetExeDirectory() + pwadStr;
                 cmd += "-file \"" + pwadStr + "\" ";
             }
@@ -1947,8 +2217,8 @@ void MainWindow::BRSWorkerThread() {
 
         // outputdemo and queue will be local names
         cmd += "-recordfromto \"" + std::string(m_brsDemoPath) + "\" \"outputdemo" + std::to_string(w) + ".lmp\" ";
-		
-		// append warp if not already present in extra args
+
+        // append warp if not already present in extra args
         if (std::string(m_brsExtraArgs).find("-warp") == std::string::npos) {
             if (complevel == 3) {
                 cmd += "-warp " + std::to_string(curEpisode > 0 ? curEpisode : 1) + " " + std::to_string(curMap) + " ";
@@ -2014,7 +2284,7 @@ void MainWindow::BRSWorkerThread() {
     bool isOptimization = (isMinSearch || isMaxSearch || isAcapSearch);
 
     double bestTargetValue = isMinSearch ? (std::numeric_limits<double>::max)()
-                                         : -(std::numeric_limits<double>::max)();
+    : -(std::numeric_limits<double>::max)();
     double bestAcapDiff = (std::numeric_limits<double>::max)();
 
     m_brsTotalTasks = (int)taskQueue.size();
@@ -2028,6 +2298,7 @@ void MainWindow::BRSWorkerThread() {
             taskQueue.pop_back();
 
             std::string logName = bfDir + "/process_output" + std::to_string(task.taskIndex) + ".txt";
+#ifdef _WIN32
             SECURITY_ATTRIBUTES sa;
             sa.nLength = sizeof(sa);
             sa.bInheritHandle = TRUE;
@@ -2053,14 +2324,55 @@ void MainWindow::BRSWorkerThread() {
                 activeWorkers.push_back({task.taskIndex, pi.hProcess, pi.hThread, pi.dwProcessId});
             }
             CloseHandle(hLog);
+#else
+            std::vector<std::string> argStrings = SplitCommandLinePosix(task.command);
+            if (!argStrings.empty()) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    if (chdir(bfDir.c_str()) != 0) {
+                        _exit(127);
+                    }
+                    int logFd = open(logName.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    if (logFd >= 0) {
+                        dup2(logFd, STDOUT_FILENO);
+                        dup2(logFd, STDERR_FILENO);
+                        close(logFd);
+                    }
+                    std::vector<char*> argv;
+                    argv.reserve(argStrings.size() + 1);
+                    for (auto& s : argStrings) {
+                        argv.push_back(&s[0]);
+                    }
+                    argv.push_back(nullptr);
+                    execvp(argv[0], argv.data());
+                    _exit(127);
+                } else if (pid > 0) {
+                    activeWorkers.push_back({task.taskIndex, pid});
+                }
+            }
+#endif
         }
 
         for (size_t i = 0; i < activeWorkers.size(); ) {
+            bool finished = false;
+            int taskIdx = activeWorkers[i].taskIndex;
+
+#ifdef _WIN32
             DWORD exitCode = 0;
             if (GetExitCodeProcess(activeWorkers[i].hProcess, &exitCode) && exitCode != STILL_ACTIVE) {
-                int taskIdx = activeWorkers[i].taskIndex;
+                finished = true;
                 CloseHandle(activeWorkers[i].hProcess);
                 CloseHandle(activeWorkers[i].hThread);
+            }
+#else
+            int status = 0;
+            pid_t res = waitpid(activeWorkers[i].pid, &status, WNOHANG);
+            if (res > 0) {
+                finished = true;
+            }
+#endif
+
+            if (finished) {
                 activeWorkers.erase(activeWorkers.begin() + i);
                 m_brsCompletedTasks++;
 
@@ -2069,7 +2381,7 @@ void MainWindow::BRSWorkerThread() {
                 std::string line;
                 bool taskSucceeded = false;
                 double taskBestVal = isMinSearch ? (std::numeric_limits<double>::max)()
-                                                 : -(std::numeric_limits<double>::max)();
+                : -(std::numeric_limits<double>::max)();
                 bool foundCandidate = false;
 
                 while (std::getline(f, line)) {
@@ -2129,10 +2441,15 @@ void MainWindow::BRSWorkerThread() {
 
                         // kill all remaining workers
                         for (auto& w : activeWorkers) {
+#ifdef _WIN32
                             TerminateProcess(w.hProcess, 0);
                             WaitForSingleObject(w.hProcess, 500);
                             CloseHandle(w.hProcess);
                             CloseHandle(w.hThread);
+#else
+                            kill(w.pid, SIGKILL);
+                            waitpid(w.pid, nullptr, 0);
+#endif
                         }
                         activeWorkers.clear();
 
@@ -2144,21 +2461,30 @@ void MainWindow::BRSWorkerThread() {
                 ++i;
             }
         }
-        
+
         // break outer dispatch loop if match was found
         if (!isOptimization && m_brsWinningTaskIndex >= 0) {
             break;
         }
 
+#ifdef _WIN32
         Sleep(20);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+#endif
     }
 
     // terminate and wait for all remaining workers to release file locks
     for (auto& w : activeWorkers) {
+#ifdef _WIN32
         TerminateProcess(w.hProcess, 0);
         WaitForSingleObject(w.hProcess, 2000); // wait up to 2s for OS teardown
         CloseHandle(w.hProcess);
         CloseHandle(w.hThread);
+#else
+        kill(w.pid, SIGKILL);
+        waitpid(w.pid, nullptr, 0);
+#endif
     }
     activeWorkers.clear();
 
@@ -2168,7 +2494,11 @@ void MainWindow::BRSWorkerThread() {
     } else {
         CleanupBRSArtifacts(m_brsWinningTaskIndex);
         if (m_brsWinningTaskIndex >= 0) {
+#ifdef _WIN32
             std::string finalDemoPath = GetBFBackupDirectory() + "\\outputdemo" + std::to_string(m_brsWinningTaskIndex) + ".lmp";
+#else
+            std::string finalDemoPath = GetBFBackupDirectory() + "/outputdemo" + std::to_string(m_brsWinningTaskIndex) + ".lmp";
+#endif
             m_brsStatusMessage = "Search complete: solution found (copied to " + finalDemoPath + ").";
 
             if (m_brsAutoLoadResult) {
@@ -2180,8 +2510,13 @@ void MainWindow::BRSWorkerThread() {
         }
     }
 
+#ifdef _WIN32
     SetEnvironmentVariableA("SDL_VIDEODRIVER", NULL);
     SetEnvironmentVariableA("SDL_AUDIODRIVER", NULL);
+#else
+    unsetenv("SDL_VIDEODRIVER");
+    unsetenv("SDL_AUDIODRIVER");
+#endif
 
     m_brsIsRunning = false;
 }
