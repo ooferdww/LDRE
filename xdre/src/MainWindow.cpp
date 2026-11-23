@@ -9,6 +9,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #else
 #include <unistd.h>
 #include <sys/stat.h>
@@ -65,9 +66,9 @@ static std::string GetBFDirectory() {
     return base.empty() ? "bf" : (base + "bf");
 }
 
-static std::string GetBFBackupDirectory() {
+static std::string GetSegmentDemoOutputDirectory() {
     std::string base = GetExeDirectory();
-    return base.empty() ? "bf_backup" : (base + "bf_backup");
+    return base.empty() ? "dsda_segment_demos" : (base + "dsda_segment_demos");
 }
 
 // ensure dir exists
@@ -363,9 +364,22 @@ void MainWindow::Init() {
     LoadConfig();
     xdre::setAngleType(m_selectedAngleType);
     xdre::setSavepointStyle(m_selectedSavepointStyle);
+	xdre::setMovementLimit(m_movementLimit);
 
     if (xdre::getBlood() != m_bloodEnabled) {
         xdre::toggleBlood();
+    }
+	
+	if (xdre::getBlockmapGrid() != m_blockmapGridEnabled) {
+    xdre::toggleBlockmapGrid();
+    }
+	
+	if (xdre::getThingHealth() != m_thingHealthEnabled) {
+        xdre::toggleThingHealth();
+    }
+
+    if (xdre::getThingIndex() != m_thingIndexEnabled) {
+        xdre::toggleThingIndex();
     }
 
     // default to hardware if nothing found in ini
@@ -434,12 +448,17 @@ static void BuildCommandMap(const std::unordered_map<std::string, std::string>& 
         else if (pair.first == "Use")                 outCmdMap[pair.second] = XCmd::Use;
         else if (pair.first == "TurnStepLeft")        outCmdMap[pair.second] = XCmd::TurnStepLeft;
         else if (pair.first == "TurnStepRight")       outCmdMap[pair.second] = XCmd::TurnStepRight;
+		else if (pair.first == "RunStepFwd")          outCmdMap[pair.second] = XCmd::RunStepFwd;
+        else if (pair.first == "RunStepBwd")          outCmdMap[pair.second] = XCmd::RunStepBwd;
+        else if (pair.first == "StrafeStepLeft")      outCmdMap[pair.second] = XCmd::StrafeStepLeft;
+        else if (pair.first == "StrafeStepRight")     outCmdMap[pair.second] = XCmd::StrafeStepRight;
         else if (pair.first == "TurnStep")            outCmdMap[pair.second] = XCmd::TurnStep;
         else if (pair.first == "PrevTic")             outCmdMap[pair.second] = XCmd::PrevTic;
         else if (pair.first == "NextTic")             outCmdMap[pair.second] = XCmd::NextTic;
         else if (pair.first == "CopyTic")             outCmdMap[pair.second] = XCmd::CopyTic;
         else if (pair.first == "DeleteTic")           outCmdMap[pair.second] = XCmd::DeleteTic;
         else if (pair.first == "NewTic")              outCmdMap[pair.second] = XCmd::NewTic;
+		else if (pair.first == "ClearMovement")       outCmdMap[pair.second] = XCmd::ClearMovement;
         else if (pair.first == "ToggleBlood")         outCmdMap[pair.second] = XCmd::ToggleBlood;
         else if (pair.first == "ToggleAutomap")       outCmdMap[pair.second] = XCmd::ToggleAutomap;
         else if (pair.first == "ToggleAutomapFollow") outCmdMap[pair.second] = XCmd::ToggleAutomapFollow;
@@ -449,6 +468,9 @@ static void BuildCommandMap(const std::unordered_map<std::string, std::string>& 
         else if (pair.first == "PanAutomapRight")     outCmdMap[pair.second] = XCmd::PanAutomapRight;
         else if (pair.first == "PanAutomapUp")        outCmdMap[pair.second] = XCmd::PanAutomapUp;
         else if (pair.first == "PanAutomapDown")      outCmdMap[pair.second] = XCmd::PanAutomapDown;
+		else if (pair.first == "ToggleBlockmap")      outCmdMap[pair.second] = XCmd::ToggleBlockmap;
+		else if (pair.first == "ToggleThingHealth")   outCmdMap[pair.second] = XCmd::ToggleThingHealth;
+        else if (pair.first == "ToggleThingIndex")    outCmdMap[pair.second] = XCmd::ToggleThingIndex;
         else if (pair.first == "SetSavepoint")        outCmdMap[pair.second] = XCmd::SetSavepoint;
         else if (pair.first == "UnsetSavepoint")      outCmdMap[pair.second] = XCmd::UnsetSavepoint;
         else if (pair.first == "Load")                outCmdMap[pair.second] = XCmd::Load;
@@ -485,8 +507,9 @@ void MainWindow::LoadConfig() {
 
     const char* keyNames[] = {
         "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
+        "RunStepFwd", "RunStepBwd", "StrafeStepLeft", "StrafeStepRight",
         "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-        "ToggleBlood", "ToggleAutomap",
+        "ToggleBlood", "ClearMovement", "ToggleAutomap",
         "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
         "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
         "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
@@ -494,8 +517,9 @@ void MainWindow::LoadConfig() {
     };
     const char* defaults[] = {
         "f", "u", "-", "+", "ts",
+        "o", "p", "k", "l",
         "j", "i", "c", "x", "n",
-        "z", "m",
+        "z", "h", "m",
         "ssp", "pss", "load", "save", "exit",
         "wq", "we", "sa", "sd", "re", "rt",
         "g", "tr", "ty", "tc", "tx",
@@ -511,8 +535,9 @@ void MainWindow::LoadConfig() {
     const char* automapKeyNames[] = {
         "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
         "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-        "ToggleBlood", "ToggleAutomap", "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+        "ToggleAutomap", "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
         "PanAutomapUp", "PanAutomapLeft", "PanAutomapDown", "PanAutomapRight",
+        "ToggleBlockmap", "ToggleThingHealth", "ToggleThingIndex",
         "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
         "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
         "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
@@ -521,8 +546,9 @@ void MainWindow::LoadConfig() {
     const char* automapDefaults[] = {
         "k", "u", "-", "+", "ts",
         "j", "i", "c", "x", "n",
-        "z", "m", "f", "l", "o",
+        "m", "f", "l", "o",
         "w", "a", "s", "d",
+        "b", "z", "q",
         "ssp", "pss", "load", "save", "exit",
         "bq", "be", "pg", "ph", "re", "rt",
         "g", "tr", "ty", "tc", "tx",
@@ -539,12 +565,43 @@ void MainWindow::LoadConfig() {
     m_selectedSavepointStyle = std::stoi(IniRead("SavepointMode", "1"));
     m_lastDirectory = IniRead("LastDirectory", ".");
     m_bloodEnabled = (std::stoi(IniRead("Blood", "0")) != 0);
+	m_momHighlightEnabled = (std::stoi(IniRead("MomHighlightEnabled", "1")) != 0);
+    m_momLossThreshold = std::stof(IniRead("MomLossThreshold", "5.0"));
+    if (m_momLossThreshold < 0.0f) { m_momLossThreshold = 0.0f; }
+	m_movementLimit = std::stoi(IniRead("MovementLimit", "1"));
+    if (m_movementLimit < 0 || m_movementLimit > 2) { m_movementLimit = 1; }
 	m_automapPanSpeed = (std::max)(1, std::stoi(IniRead("AutomapPanSpeed", "2")));
+	m_blockmapGridEnabled = (std::stoi(IniRead("BlockmapGrid", "0")) != 0);
+	m_thingHealthEnabled  = (std::stoi(IniRead("ThingHealth", "0")) != 0);
+    m_thingIndexEnabled   = (std::stoi(IniRead("ThingIndex", "0")) != 0);
+	m_dsdaMovementFormat = (std::stoi(IniRead("DsdaMovementFormat", "0")) != 0);
 	m_invertTicScrub = (std::stoi(IniRead("InvertTicScrub", "1")) != 0);
-	m_brsAutoLoadResult = (std::stoi(IniRead("BRSAutoLoadResult", "1")) != 0);
 	m_brsThreadGoal = std::stoi(IniRead("BRSThreadGoal", "0"));
 	
+	std::string segDir = IniRead("SegmentFolder", "dsda_segment");
+    std::strncpy(m_segmentDirPath, segDir.c_str(), sizeof(m_segmentDirPath) - 1);
+    m_segmentDirPath[sizeof(m_segmentDirPath) - 1] = '\0';
+
+    std::string segArgs = IniRead("SegmentExtraArgs", "");
+    std::strncpy(m_segmentExtraArgs, segArgs.c_str(), sizeof(m_segmentExtraArgs) - 1);
+    m_segmentExtraArgs[sizeof(m_segmentExtraArgs) - 1] = '\0';
+	
+	m_segmentGameSpeed = std::stoi(IniRead("SegmentGameSpeed", "50"));
+    m_segmentGameSpeed = (std::max)(5, (std::min)(1000, m_segmentGameSpeed));
+	
+	m_segmentUseCustomConfig = (std::stoi(IniRead("SegmentUseCustomConfig", "0")) != 0);
+    std::string segCfg = IniRead("SegmentConfigPath", "");
+    std::strncpy(m_segmentConfigPath, segCfg.c_str(), sizeof(m_segmentConfigPath) - 1);
+    m_segmentConfigPath[sizeof(m_segmentConfigPath) - 1] = '\0';
+	
+	m_segmentAutoLoadResult = (std::stoi(IniRead("SegmentAutoLoadResult", "1")) != 0);
+	
     IniWrite("Blood", m_bloodEnabled ? "1" : "0");
+	IniWrite("BlockmapGrid", m_blockmapGridEnabled ? "1" : "0");
+	IniWrite("ThingHealth", m_thingHealthEnabled ? "1" : "0");
+    IniWrite("ThingIndex", m_thingIndexEnabled ? "1" : "0");
+	IniWrite("DsdaMovementFormat", m_dsdaMovementFormat ? "1" : "0");
+	IniWrite("MovementLimit", std::to_string(m_movementLimit));
 	
 	m_guiPosX = std::stoi(IniRead("GuiWindowX", "-1"));
     m_guiPosY = std::stoi(IniRead("GuiWindowY", "-1"));
@@ -570,10 +627,22 @@ void MainWindow::WriteConfig() {
     IniWrite("SavepointMode", std::to_string(m_selectedSavepointStyle));
     IniWrite("LastDirectory", m_lastDirectory);
     IniWrite("Blood", m_bloodEnabled ? "1" : "0");
+	IniWrite("MomHighlightEnabled", m_momHighlightEnabled ? "1" : "0");
+    IniWrite("MomLossThreshold", std::to_string(m_momLossThreshold));
 	IniWrite("AutomapPanSpeed", std::to_string(m_automapPanSpeed));
+	IniWrite("BlockmapGrid", m_blockmapGridEnabled ? "1" : "0");
+	IniWrite("ThingHealth", m_thingHealthEnabled ? "1" : "0");
+    IniWrite("ThingIndex", m_thingIndexEnabled ? "1" : "0");
+	IniWrite("DsdaMovementFormat", m_dsdaMovementFormat ? "1" : "0");
+	IniWrite("MovementLimit", std::to_string(m_movementLimit));
 	IniWrite("InvertTicScrub", m_invertTicScrub ? "1" : "0");
-	IniWrite("BRSAutoLoadResult", m_brsAutoLoadResult ? "1" : "0");
 	IniWrite("BRSThreadGoal", std::to_string(m_brsThreadGoal));
+	IniWrite("SegmentFolder", m_segmentDirPath);
+    IniWrite("SegmentExtraArgs", m_segmentExtraArgs);
+	IniWrite("SegmentGameSpeed", std::to_string(m_segmentGameSpeed));
+	IniWrite("SegmentUseCustomConfig", m_segmentUseCustomConfig ? "1" : "0");
+    IniWrite("SegmentConfigPath", m_segmentConfigPath);
+	IniWrite("SegmentAutoLoadResult", m_segmentAutoLoadResult ? "1" : "0");
 	
 	IniWrite("GuiWindowX", std::to_string(m_guiPosX));
     IniWrite("GuiWindowY", std::to_string(m_guiPosY));
@@ -584,6 +653,9 @@ void MainWindow::WriteConfig() {
     SaveIni(iniPath);
 }
 
+static bool s_needInputTextPurge = false;
+static bool s_spaceCommandTriggered = false;
+
 void MainWindow::DoInput(XCmd cmd, unsigned int val) {
     switch (cmd) {
 		case XCmd::None:                                         break;
@@ -592,6 +664,10 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::TurnStepLeft:  xdre::turnStepLeft();          break;
         case XCmd::TurnStepRight: xdre::turnStepRight();         break;
         case XCmd::TurnStep:      xdre::setTurnStep(val);        break;
+		case XCmd::RunStepFwd:      xdre::runStepFwd();          break;
+        case XCmd::RunStepBwd:      xdre::runStepBwd();          break;
+        case XCmd::StrafeStepLeft:  xdre::strafeStepLeft();      break;
+        case XCmd::StrafeStepRight: xdre::strafeStepRight();     break;
         case XCmd::PrevTic:       xdre::seekDemo(-1);            break;
         case XCmd::NextTic:       xdre::seekDemo(1);             break;
         case XCmd::CopyTic:       xdre::copyTic();               break;
@@ -599,8 +675,9 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::DeleteTic:     xdre::deleteTic();             break;
         case XCmd::DeleteTicX:    xdre::deleteTicX(val);         break;
         case XCmd::NewTic:        xdre::newTic();                break;
+		case XCmd::ClearMovement: xdre::run(0); xdre::strafe(0); break;
         case XCmd::ToggleBlood:   xdre::toggleBlood();      m_bloodEnabled = xdre::getBlood();    break;
-		case XCmd::ToggleAutomap: xdre::toggleAutomap();         break;
+		case XCmd::ToggleAutomap: xdre::toggleAutomap(); m_inputBuffer[0] = '\0'; s_needInputTextPurge = true; break;
 		case XCmd::ToggleAutomapFollow: xdre::toggleAutomapFollow(); break;
 		case XCmd::ZoomAutomapIn:       xdre::zoomAutomap(1);        break;
         case XCmd::ZoomAutomapOut:      xdre::zoomAutomap(-1);       break;
@@ -608,6 +685,9 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::PanAutomapRight:     xdre::panAutomap(m_automapPanSpeed, 0);      break;
         case XCmd::PanAutomapUp:        xdre::panAutomap(0, m_automapPanSpeed);      break;
         case XCmd::PanAutomapDown:      xdre::panAutomap(0, -m_automapPanSpeed);     break;
+		case XCmd::ToggleBlockmap:    xdre::toggleBlockmapGrid(); m_blockmapGridEnabled = xdre::getBlockmapGrid(); break;
+        case XCmd::ToggleThingHealth: xdre::toggleThingHealth();  m_thingHealthEnabled  = xdre::getThingHealth();  break;
+        case XCmd::ToggleThingIndex:  xdre::toggleThingIndex();   m_thingIndexEnabled   = xdre::getThingIndex();   break;
         case XCmd::SetSavepoint:  xdre::setSavepoint();          break;
         case XCmd::UnsetSavepoint:xdre::unsetSavepoint();        break;
         case XCmd::Load:          LoadReplayFile();              break;
@@ -625,6 +705,22 @@ void MainWindow::DoInput(XCmd cmd, unsigned int val) {
         case XCmd::BackwardDemo:  xdre::seekDemo(-static_cast<int>(val));       break;
         case XCmd::ForwardDemo:   xdre::seekDemo(static_cast<int>(val));        break;
         case XCmd::ChangePlayer:  xdre::changePlayerView(val);   break;
+    }
+	
+	// invalidate cached momentum from current tic onward when tic data changes
+    if (cmd != XCmd::None && cmd != XCmd::PrevTic && cmd != XCmd::NextTic &&
+        cmd != XCmd::BackwardDemo && cmd != XCmd::ForwardDemo &&
+        cmd != XCmd::ToggleBlood && cmd != XCmd::ToggleAutomap &&
+        cmd != XCmd::ToggleAutomapFollow && cmd != XCmd::ZoomAutomapIn &&
+        cmd != XCmd::ZoomAutomapOut && cmd != XCmd::PanAutomapLeft &&
+        cmd != XCmd::PanAutomapRight && cmd != XCmd::PanAutomapUp &&
+        cmd != XCmd::PanAutomapDown && cmd != XCmd::SetSavepoint &&
+        cmd != XCmd::UnsetSavepoint && cmd != XCmd::Save && cmd != XCmd::Exit &&
+        cmd != XCmd::ChangePlayer) {
+        unsigned int editTic = xdre::getCurrentTic();
+        if (editTic < m_ticMomentumValid.size()) {
+            std::fill(m_ticMomentumValid.begin() + editTic, m_ticMomentumValid.end(), 0);
+        }
     }
 }
 
@@ -669,18 +765,95 @@ void MainWindow::ProcessInputField(const char* inputStr) {
 }
 
 void MainWindow::Render() {
-	// check if background worker queued a winning demo reload
+	// check if background worker queued winning inputs to apply directly in editor
     if (m_brsPendingReload.load()) {
         m_brsPendingReload = false;
-        FILE* f = std::fopen(m_brsPendingReloadPath.c_str(), "rb");
+
+        int opts[28] = { 0 };
+        xdre::getOptions(opts);
+        bool isLongtics = (opts[27] != 0);
+
+        int maxListIndex = static_cast<int>(xdre::getTiclistSize()) - 1;
+
+        for (const auto& winCmd : m_brsPendingWinCmds) {
+            if (winCmd.frame < 0) continue;
+            int ticIdx = m_brsPendingWinBaseTic + winCmd.frame;
+            if (ticIdx < 0 || ticIdx > maxListIndex) continue;
+
+            int cur = static_cast<int>(xdre::getCurrentTic());
+            if (ticIdx != cur) {
+                xdre::seekDemo(ticIdx - cur);
+            }
+
+            // read existing buttons on this tic so toggles match exact target state
+            unsigned char existingBtns = 0;
+            auto existingRange = xdre::getTicDataRange(ticIdx, ticIdx);
+            if (!existingRange.empty()) {
+                existingBtns = existingRange[0].buttons;
+            }
+
+            xdre::run(static_cast<signed char>(winCmd.forwardmove));
+            xdre::strafe(static_cast<signed char>(winCmd.sidemove));
+
+            if (isLongtics) {
+                xdre::turn(static_cast<signed short>(winCmd.angleturn));
+            } else {
+                signed char turnUnits = static_cast<signed char>((winCmd.angleturn + 128) >> 8);
+                xdre::turn(static_cast<signed short>(turnUnits));
+            }
+
+            bool wantFire = (winCmd.buttons & 1) != 0;
+            bool hasFire  = (existingBtns & 1) != 0;
+            if (wantFire != hasFire) {
+                xdre::toggleFire();
+            }
+
+            bool wantUse = (winCmd.buttons & 2) != 0;
+            bool hasUse  = (existingBtns & 2) != 0;
+            if (wantUse != hasUse) {
+                xdre::toggleUse();
+            }
+
+            if (winCmd.buttons & 4) {
+                char wp = static_cast<char>(((winCmd.buttons >> 3) & 7) + 1);
+                xdre::changeWeapon(wp);
+            }
+        }
+
+        if (m_brsPendingWinBaseTic >= 0 && m_brsPendingWinBaseTic < (int)m_ticMomentumValid.size()) {
+            std::fill(m_ticMomentumValid.begin() + m_brsPendingWinBaseTic, m_ticMomentumValid.end(), 0);
+        }
+
+        // seek to target tic
+        int currentTic = static_cast<int>(xdre::getCurrentTic());
+        int destTic = (m_brsTargetTic >= 0) ? m_brsTargetTic : m_brsInitialTic;
+        int targetTic = (std::min)(destTic, maxListIndex);
+        if (targetTic >= 0 && targetTic != currentTic) {
+            xdre::seekDemo(targetTic - currentTic);
+        }
+
+        m_brsPendingWinCmds.clear();
+        m_brsPendingWinBaseTic = -1;
+    }
+	
+	// check if a segment recording session queued the latest output demo for reload
+    if (m_segmentPendingReload.load()) {
+        m_segmentPendingReload = false;
+        FILE* f = std::fopen(m_segmentPendingReloadPath.c_str(), "rb");
         if (f) {
             xdre::load(f);
+
+            m_ticMomentumCache.clear();
+            m_ticMomentumValid.clear();
+            m_brsTics.clear();
+            m_selectedBRSTic = -1;
+
             std::fclose(f);
 
-            // seek to original tic
+            // seek to the tic where the segment started (or end of demo if shorter)
             int currentTic = static_cast<int>(xdre::getCurrentTic());
             int maxListIndex = static_cast<int>(xdre::getTiclistSize()) - 1;
-            int targetTic = (std::min)(m_brsInitialTic, maxListIndex);
+            int targetTic = (std::min)((std::max)(0, m_segmentSkipTic), maxListIndex);
             if (targetTic >= 0 && targetTic != currentTic) {
                 xdre::seekDemo(targetTic - currentTic);
             }
@@ -710,9 +883,10 @@ void MainWindow::Render() {
     // external dialogs
     RenderHeaderDialog();
     RenderKeysDialog();
-	RenderExitDialog();
+    RenderExitDialog();
     RenderBRSDialog();
-	RenderOptionsDialog();
+    RenderSegmentDialog();
+    RenderOptionsDialog();
 	
 	ImGui::End();
 }
@@ -731,6 +905,7 @@ void MainWindow::RenderMenuBar() {
             if (ImGui::MenuItem("Brute-force...")) {
                 m_brsInitialTic = static_cast<int>(xdre::getCurrentTic());
 				m_brsTargetTic  = m_brsInitialTic; // default target tic to current tic
+				m_chkAngleType = m_selectedAngleType; // default angle type to selected type
 
                 // ensure active options from ldre are refreshed
                 xdre::getOptions(m_headerOptions);
@@ -756,6 +931,21 @@ void MainWindow::RenderMenuBar() {
                 }
                 m_showHeaderDialog = true;
             }
+			if (ImGui::MenuItem("Slowmotion/Segment...")) {
+                m_segmentSkipTic = static_cast<int>(xdre::getCurrentTic());
+                m_segmentStatusMessage = "";
+
+                std::string tempDemo = GetExeDirectory() + "segment_temp_input.lmp";
+                FILE* f = std::fopen(tempDemo.c_str(), "wb");
+                if (f) {
+                    xdre::save(f);
+                    std::fclose(f);
+                    std::strncpy(m_segmentDemoPath, tempDemo.c_str(), sizeof(m_segmentDemoPath) - 1);
+                    m_segmentDemoPath[sizeof(m_segmentDemoPath) - 1] = '\0';
+                }
+
+                m_showSegmentDialog = true;
+            }
             ImGui::EndMenu();
         }
 
@@ -764,8 +954,15 @@ void MainWindow::RenderMenuBar() {
 			if (ImGui::MenuItem("Options...")) {
                 m_bloodEditBuffer = xdre::getBlood();
                 m_invertTicScrubEditBuffer = m_invertTicScrub;
-                m_brsAutoLoadResultEditBuffer = m_brsAutoLoadResult;
                 m_automapPanSpeedEditBuffer = m_automapPanSpeed;
+				m_blockmapGridEditBuffer = xdre::getBlockmapGrid();
+				m_thingHealthEditBuffer  = xdre::getThingHealth();
+                m_thingIndexEditBuffer   = xdre::getThingIndex();
+				m_dsdaMovementFormatEditBuffer = m_dsdaMovementFormat;
+                m_momHighlightEditBuffer = m_momHighlightEnabled;
+                m_momLossThresholdEditBuffer = m_momLossThreshold;
+				m_movementLimitEditBuffer = m_movementLimit;
+				m_segmentAutoLoadResultEditBuffer = m_segmentAutoLoadResult;
                 m_showOptionsDialog = true;
             }
 			
@@ -773,8 +970,9 @@ void MainWindow::RenderMenuBar() {
                 m_keyEditList.clear();
                 const char* keyNames[] = {
                     "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
+                    "RunStepFwd", "RunStepBwd", "StrafeStepLeft", "StrafeStepRight",
                     "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-                    "ToggleBlood", "ToggleAutomap", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+                    "ToggleBlood", "ClearMovement", "ToggleAutomap", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
                     "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
                     "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
                     "BackwardDemo", "ForwardDemo", "ChangePlayer"
@@ -792,9 +990,10 @@ void MainWindow::RenderMenuBar() {
                 const char* automapKeyNames[] = {
                     "PanAutomapUp", "PanAutomapLeft", "PanAutomapDown", "PanAutomapRight",
                     "ToggleAutomapFollow", "ZoomAutomapIn", "ZoomAutomapOut",
+                    "ToggleBlockmap", "ToggleThingHealth", "ToggleThingIndex",
                     "Fire", "Use", "TurnStepLeft", "TurnStepRight", "TurnStep",
                     "PrevTic", "NextTic", "CopyTic", "DeleteTic", "NewTic",
-                    "ToggleBlood", "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
+                    "SetSavepoint", "UnsetSavepoint", "Load", "Save", "Exit",
                     "RunBwd", "RunFwd", "StrafeLeft", "StrafeRight", "TurnLeft", "TurnRight",
                     "Weapon", "TransposeLeft", "TransposeRight", "CopyTicX", "DeleteTicX",
                     "BackwardDemo", "ForwardDemo", "ChangePlayer"
@@ -822,6 +1021,49 @@ void MainWindow::RenderMenuBar() {
     }
 }
 
+static std::string SerializeTicsToClipboard(const std::vector<xdre::TicData>& tics) {
+    std::ostringstream oss;
+    oss << "LDRE_TICS_V1\n";
+    for (const auto& t : tics) {
+        oss << static_cast<int>(t.forwardmove) << " "
+            << static_cast<int>(t.sidemove) << " "
+            << static_cast<int>(t.angleturn) << " "
+            << static_cast<unsigned int>(t.buttons) << "\n";
+    }
+    return oss.str();
+}
+
+static bool DeserializeTicsFromClipboard(const char* text, std::vector<xdre::TicData>& outTics) {
+    outTics.clear();
+    if (!text || text[0] == '\0') return false;
+
+    std::istringstream iss(text);
+    std::string header;
+    if (!std::getline(iss, header)) return false;
+    while (!header.empty() && (header.back() == '\r' || header.back() == '\n' || header.back() == ' ')) {
+        header.pop_back();
+    }
+    if (header != "LDRE_TICS_V1") return false;
+
+    std::string line;
+    while (std::getline(iss, line)) {
+        if (line.empty() || line == "\r") continue;
+        std::istringstream lineStream(line);
+        int fwd = 0, str = 0, turn = 0;
+        unsigned int btns = 0;
+        if (!(lineStream >> fwd >> str >> turn >> btns)) {
+            return false;
+        }
+        xdre::TicData td;
+        td.forwardmove = static_cast<signed char>(fwd);
+        td.sidemove = static_cast<signed char>(str);
+        td.angleturn = static_cast<signed short>(turn);
+        td.buttons = static_cast<unsigned char>(btns);
+        outTics.push_back(td);
+    }
+    return !outTics.empty();
+}
+
 void MainWindow::RenderTicList() {
     ImGui::Text("Tic Commands");
     ImGui::Separator();
@@ -829,15 +1071,49 @@ void MainWindow::RenderTicList() {
     int const totalTics = static_cast<int>(xdre::getTiclistSize());
     int const currentTic = static_cast<int>(xdre::getCurrentTic());
 
+    if (m_ticSelStart >= totalTics || m_ticSelEnd >= totalTics) {
+        m_ticSelStart = -1;
+        m_ticSelEnd = -1;
+        m_ticShiftSelecting = false;
+    }
+
     ImVec2 outerSize(0.0f, -ImGui::GetFrameHeightWithSpacing());
     if (ImGui::BeginTable("TicTable", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY, outerSize)) {
-        
+        ImGuiIO& io = ImGui::GetIO();
+        bool const shiftHeld = io.KeyShift || ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+
+        ImVec2 winPos = ImGui::GetWindowPos();
+        ImVec2 winSize = ImGui::GetWindowSize();
+        bool const anyPopupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        bool const isHovered = !anyPopupOpen && ImGui::IsMouseHoveringRect(winPos, ImVec2(winPos.x + winSize.x, winPos.y + winSize.y), false);
+        m_ticListHovered = isHovered;
+
+        // release shift --> copy selected range to clipboard
+        if (m_ticShiftSelecting && !shiftHeld) {
+            m_ticShiftSelecting = false;
+            if (m_ticSelStart >= 0 && m_ticSelEnd >= 0) {
+                auto copied = xdre::getTicDataRange(m_ticSelStart, m_ticSelEnd);
+                if (!copied.empty()) {
+                    std::string clipText = SerializeTicsToClipboard(copied);
+                    ImGui::SetClipboardText(clipText.c_str());
+                }
+            }
+        }
+
+        // shift+v while hovering over tic list --> paste to end of demo
+        if (isHovered && shiftHeld && ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+            const char* clipText = ImGui::GetClipboardText();
+            std::vector<xdre::TicData> pastedTics;
+            if (DeserializeTicsFromClipboard(clipText, pastedTics)) {
+                xdre::appendTicsToEnd(pastedTics);
+            }
+        }
+
         // when m_invertTicScrub is true, normal wheel switches tics while rmb allows normal scroll
         bool const rmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
         bool const shouldScrubTics = m_invertTicScrub ? !rmbDown : rmbDown;
 
-        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && shouldScrubTics) {
-            ImGuiIO& io = ImGui::GetIO();
+        if (isHovered && shouldScrubTics) {
             if (io.MouseWheel != 0.0f) {
                 int const stepTics = -static_cast<int>(io.MouseWheel);
                 xdre::seekDemo(stepTics);
@@ -849,6 +1125,9 @@ void MainWindow::RenderTicList() {
         ImGui::TableSetupColumn("Command", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableHeadersRow();
 
+        int selMin = (m_ticSelStart >= 0 && m_ticSelEnd >= 0) ? (std::min)(m_ticSelStart, m_ticSelEnd) : -1;
+        int selMax = (m_ticSelStart >= 0 && m_ticSelEnd >= 0) ? (std::max)(m_ticSelStart, m_ticSelEnd) : -1;
+
         ImGuiListClipper clipper;
         clipper.Begin(totalTics);
 
@@ -856,16 +1135,34 @@ void MainWindow::RenderTicList() {
             for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
                 ImGui::TableNextRow();
                 bool const isSelected = (i == currentTic);
+                bool const isInRange = (selMin >= 0 && i >= selMin && i <= selMax);
 
-                if (isSelected) {
+                if (isSelected && isInRange) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(0.35f, 0.55f, 0.70f, 0.85f)));
+                } else if (isSelected) {
                     ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(0.25f, 0.45f, 0.75f, 0.70f)));
+                } else if (isInRange) {
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(ImVec4(0.25f, 0.60f, 0.45f, 0.50f)));
                 }
 
                 ImGui::TableSetColumnIndex(0);
                 char numStr[16];
                 snprintf(numStr, sizeof(numStr), "%d", i);
-                if (ImGui::Selectable(numStr, isSelected, ImGuiSelectableFlags_SpanAllColumns)) {
-                    xdre::seekDemo(i - currentTic);
+                if (ImGui::Selectable(numStr, isSelected || isInRange, ImGuiSelectableFlags_SpanAllColumns)) {
+                    if (shiftHeld) {
+                        if (!m_ticShiftSelecting) {
+                            m_ticSelStart = i;
+                            m_ticSelEnd = i;
+                            m_ticShiftSelecting = true;
+                        } else {
+                            m_ticSelEnd = i;
+                        }
+                    } else {
+                        m_ticSelStart = -1;
+                        m_ticSelEnd = -1;
+                        m_ticShiftSelecting = false;
+                        xdre::seekDemo(i - currentTic);
+                    }
                 }
 
                 ImGui::TableSetColumnIndex(1);
@@ -1089,8 +1386,88 @@ void MainWindow::RenderThingTracking() {
     }
 }
 
+static void FormatMovementValue(char* buf, size_t bufSize, double val, bool dsdaFormat, const char* decFmt = "%.6f") {
+    if (!dsdaFormat) {
+        snprintf(buf, bufSize, decFmt, val);
+        return;
+    }
+
+    long long fixedVal = static_cast<long long>(std::llround(val * 65536.0));
+    bool neg = (fixedVal < 0);
+    unsigned long long absFixed = neg ? static_cast<unsigned long long>(-fixedVal)
+                                      : static_cast<unsigned long long>(fixedVal);
+    unsigned long long intPart  = absFixed >> 16;
+    unsigned int fracPart       = static_cast<unsigned int>(absFixed & 0xFFFF);
+
+    if (neg) {
+        snprintf(buf, bufSize, "-%llu/%05u", intPart, fracPart);
+    } else {
+        snprintf(buf, bufSize, "%llu/%05u", intPart, fracPart);
+    }
+}
+
 void MainWindow::RenderPlayerMovement() {
     if (ImGui::CollapsingHeader("Player Movement", ImGuiTreeNodeFlags_DefaultOpen)) {
+        unsigned int curTic = xdre::getCurrentTic();
+        size_t totalTics = xdre::getTiclistSize();
+
+        if (m_ticMomentumCache.size() != totalTics) {
+            m_ticMomentumCache.resize(totalTics, { 0.0, 0.0 });
+            m_ticMomentumValid.resize(totalTics, 0);
+        }
+
+        double curXMom = xdre::getXMom();
+        double curYMom = xdre::getYMom();
+        if (curTic < totalTics) {
+            m_ticMomentumCache[curTic] = { curXMom, curYMom };
+            m_ticMomentumValid[curTic] = 1;
+        }
+
+        bool highlightX = false;
+        bool highlightY = false;
+
+        if (m_momHighlightEnabled && curTic > 0 && curTic < m_ticMomentumCache.size() && m_ticMomentumValid[curTic - 1]) {
+            double prevXMom = m_ticMomentumCache[curTic - 1].first;
+            double prevYMom = m_ticMomentumCache[curTic - 1].second;
+
+            double lostX = std::abs(prevXMom) - std::abs(curXMom);
+            double lostY = std::abs(prevYMom) - std::abs(curYMom);
+
+            if (lostX >= static_cast<double>(m_momLossThreshold)) highlightX = true;
+            if (lostY >= static_cast<double>(m_momLossThreshold)) highlightY = true;
+        }
+
+        double curXDist = xdre::getXDist();
+        double curYDist = xdre::getYDist();
+
+        // 0: normal, 1: red (< 0.9x), 2: green (> 1.4x), 3: blue (> 1.8x)
+        int distColorX = 0;
+        int distColorY = 0;
+
+        double absMomX = std::abs(curXMom);
+        double absDistX = std::abs(curXDist);
+        if (absMomX > 1e-6 || absDistX > 1e-6) {
+            if (absDistX < 0.9 * absMomX) {
+                distColorX = 1; // red
+            } else if (absDistX > 1.8 * absMomX) {
+                distColorX = 3; // blue
+            } else if (absDistX > 1.4 * absMomX) {
+                distColorX = 2; // green
+            }
+        }
+
+        double absMomY = std::abs(curYMom);
+        double absDistY = std::abs(curYDist);
+        if (absMomY > 1e-6 || absDistY > 1e-6) {
+            if (absDistY < 0.9 * absMomY) {
+                distColorY = 1; // red
+            } else if (absDistY > 1.8 * absMomY) {
+                distColorY = 3; // blue
+            } else if (absDistY > 1.4 * absMomY) {
+                distColorY = 2; // green
+            }
+        }
+
         if (ImGui::BeginTable("PlayerMovementTable", 4, ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg)) {
             // headers
             ImGui::TableSetupColumn("Metric", ImGuiTableColumnFlags_WidthFixed, 120.0f);
@@ -1099,25 +1476,43 @@ void MainWindow::RenderPlayerMovement() {
             ImGui::TableSetupColumn("Z", ImGuiTableColumnFlags_WidthFixed, 70.0f);
             ImGui::TableHeadersRow();
 
+            char valBuf[48];
+
             // position
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Position");
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%.6f", xdre::getXPos());
+            FormatMovementValue(valBuf, sizeof(valBuf), xdre::getXPos(), m_dsdaMovementFormat);
+            ImGui::TextUnformatted(valBuf);
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.6f", xdre::getYPos());
+            FormatMovementValue(valBuf, sizeof(valBuf), xdre::getYPos(), m_dsdaMovementFormat);
+            ImGui::TextUnformatted(valBuf);
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.2f", xdre::getZPos());
+            FormatMovementValue(valBuf, sizeof(valBuf), xdre::getZPos(), m_dsdaMovementFormat, "%.2f");
+            ImGui::TextUnformatted(valBuf);
 
             // momentum
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Momentum");
+
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%.6f", xdre::getXMom());
+            FormatMovementValue(valBuf, sizeof(valBuf), curXMom, m_dsdaMovementFormat);
+            if (highlightX) {
+                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", valBuf);
+            } else {
+                ImGui::TextUnformatted(valBuf);
+            }
+
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.6f", xdre::getYMom());
+            FormatMovementValue(valBuf, sizeof(valBuf), curYMom, m_dsdaMovementFormat);
+            if (highlightY) {
+                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", valBuf);
+            } else {
+                ImGui::TextUnformatted(valBuf);
+            }
+
             ImGui::TableSetColumnIndex(3);
             ImGui::TextDisabled("-");
 
@@ -1125,12 +1520,34 @@ void MainWindow::RenderPlayerMovement() {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted("Distance traveled");
+
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%.6f", xdre::getXDist());
+            FormatMovementValue(valBuf, sizeof(valBuf), curXDist, m_dsdaMovementFormat);
+            if (distColorX == 1) {
+                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", valBuf);
+            } else if (distColorX == 2) {
+                ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.25f, 1.0f), "%s", valBuf);
+            } else if (distColorX == 3) {
+                ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.0f, 1.0f), "%s", valBuf);
+            } else {
+                ImGui::TextUnformatted(valBuf);
+            }
+
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.6f", xdre::getYDist());
+            FormatMovementValue(valBuf, sizeof(valBuf), curYDist, m_dsdaMovementFormat);
+            if (distColorY == 1) {
+                ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "%s", valBuf);
+            } else if (distColorY == 2) {
+                ImGui::TextColored(ImVec4(0.25f, 1.0f, 0.25f, 1.0f), "%s", valBuf);
+            } else if (distColorY == 3) {
+                ImGui::TextColored(ImVec4(0.30f, 0.70f, 1.0f, 1.0f), "%s", valBuf);
+            } else {
+                ImGui::TextUnformatted(valBuf);
+            }
+
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.2f", xdre::getZDist());
+            FormatMovementValue(valBuf, sizeof(valBuf), xdre::getZDist(), m_dsdaMovementFormat, "%.2f");
+            ImGui::TextUnformatted(valBuf);
 
             ImGui::EndTable();
         }
@@ -1145,28 +1562,45 @@ void MainWindow::RenderPlayerMovement() {
     }
 }
 
-static bool s_needInputTextPurge = false;
-static bool s_spaceCommandTriggered = false;
-
 static int InputUnifiedCallback(ImGuiInputTextCallbackData* data) {
     MainWindow* window = (MainWindow*)data->UserData;
 
-    // purge buffer only when not in filter and buffer has contents
+    // purge old submitted text without eating a newly typed character on the same frame
     if (s_needInputTextPurge && data->EventFlag != ImGuiInputTextFlags_CallbackCharFilter) {
-        if (data->BufTextLen > 0) {
-            data->DeleteChars(0, data->BufTextLen);
-        }
-        s_needInputTextPurge = false;
-        return 0;
-    }
+      if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit && ImGui::GetIO().InputQueueCharacters.Size > 0) {
+          if (data->BufTextLen > 1) {
+              data->DeleteChars(0, data->BufTextLen - 1);
+          }
+      } else {
+          if (data->BufTextLen > 0) {
+              data->DeleteChars(0, data->BufTextLen);
+          }
+      }
+      s_needInputTextPurge = false;
+      if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+          return 0;
+      }
+  }
 
     // single char interceptor
     if (data->EventFlag == ImGuiInputTextFlags_CallbackCharFilter) {
+        ImGuiIO& io = ImGui::GetIO();
+        bool shiftHeld = io.KeyShift || ImGui::IsKeyDown(ImGuiKey_LeftShift) || ImGui::IsKeyDown(ImGuiKey_RightShift);
+        if (shiftHeld && window->IsTicListHovered()) {
+            return 1; // block inputs from leaking out of tic list while shift is held
+        }
+
         ImWchar c = data->EventChar;
 
+        // space always submits the current command regardless of buffer contents
         if (c == ' ') {
             s_spaceCommandTriggered = true;
             return 1; // discard space
+        }
+
+        // single-char instant bindings only trigger when the input box is empty
+        if (!window->IsInputBufferEmpty()) {
+            return 0;
         }
 
         // single char binding from user
@@ -1306,11 +1740,19 @@ void MainWindow::RenderGeneralSection() {
         ImGui::Text("Command Input:");
         ImGui::PushItemWidth(-1.0f);
 
-        // enterreturns, update later
         ImGuiInputTextFlags flags = ImGuiInputTextFlags_CallbackCharFilter | 
                                     ImGuiInputTextFlags_CallbackEdit | 
                                     ImGuiInputTextFlags_CallbackAlways |
                                     ImGuiInputTextFlags_EnterReturnsTrue;
+
+        static bool s_initialCommandFocus = true;
+        if (!ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) &&
+            !ImGui::IsAnyItemActive() &&
+            !ImGui::GetIO().KeyShift &&
+            (s_initialCommandFocus || ImGui::GetIO().InputQueueCharacters.Size > 0)) {
+            ImGui::SetKeyboardFocusHere();
+            s_initialCommandFocus = false;
+        }
 
         bool enterPressed = ImGui::InputText("##CommandLineInput", m_inputBuffer, sizeof(m_inputBuffer), flags, InputUnifiedCallback, this);
 
@@ -1438,7 +1880,16 @@ void MainWindow::LoadReplayFile() {
     if (!filepath.empty()) {
         FILE* f = std::fopen(filepath.c_str(), "rb");
         if (f) {
+            ++m_segmentLaunchGen;
+            m_segmentPendingReload = false;
+
             xdre::load(f);
+			
+			m_ticMomentumCache.clear();
+            m_ticMomentumValid.clear();
+            m_brsTics.clear();
+            m_selectedBRSTic = -1;
+			
             std::fclose(f);
         }
     }
@@ -1666,7 +2117,11 @@ void MainWindow::RenderOptionsDialog() {
 
         ImGui::Checkbox("Palette stuff (blood/pickups)", &m_bloodEditBuffer);
         ImGui::Checkbox("Direct scrollwheel tic switching (hold RMB to scroll list)", &m_invertTicScrubEditBuffer);
-        ImGui::Checkbox("Auto-load winning brute-force demo into editor", &m_brsAutoLoadResultEditBuffer);
+		ImGui::Checkbox("Auto-load latest segment demo into editor", &m_segmentAutoLoadResultEditBuffer);
+		ImGui::Checkbox("Show movement values in DSDA format (int/65536)", &m_dsdaMovementFormatEditBuffer);
+		ImGui::Checkbox("Show blockmap grid on automap", &m_blockmapGridEditBuffer);
+		ImGui::Checkbox("Show thing health on automap", &m_thingHealthEditBuffer);
+        ImGui::Checkbox("Show thing indices on automap", &m_thingIndexEditBuffer);
 
         ImGui::Spacing();
         ImGui::AlignTextToFramePadding();
@@ -1674,16 +2129,53 @@ void MainWindow::RenderOptionsDialog() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(120.0f);
         ImGui::SliderInt("##AutomapPanSpeed", &m_automapPanSpeedEditBuffer, 1, 10, "%dx");
+		
+		const char* movementLimitModes[] = { "No limit", "Cap to non-turbo", "Cap to stroller" };
+        ImGui::Spacing();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Movement limiter:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(160.0f);
+        ImGui::Combo("##MovementLimit", &m_movementLimitEditBuffer, movementLimitModes, IM_ARRAYSIZE(movementLimitModes));
+		
+		ImGui::Spacing();
+        ImGui::Checkbox("Highlight sudden momentum loss", &m_momHighlightEditBuffer);
+        if (!m_momHighlightEditBuffer) ImGui::BeginDisabled();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Momentum loss threshold:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::InputFloat("##MomLossThreshold", &m_momLossThresholdEditBuffer, 0.5f, 1.0f, "%.2f");
+        if (!m_momHighlightEditBuffer) ImGui::EndDisabled();
 
         ImGui::Separator();
         if (ImGui::Button("Save & Apply", ImVec2(120, 0))) {
             m_bloodEnabled = m_bloodEditBuffer;
             m_invertTicScrub = m_invertTicScrubEditBuffer;
-            m_brsAutoLoadResult = m_brsAutoLoadResultEditBuffer;
+			m_segmentAutoLoadResult = m_segmentAutoLoadResultEditBuffer;
             m_automapPanSpeed = (std::max)(1, m_automapPanSpeedEditBuffer);
+			m_blockmapGridEnabled = m_blockmapGridEditBuffer;
+			m_thingHealthEnabled  = m_thingHealthEditBuffer;
+            m_thingIndexEnabled   = m_thingIndexEditBuffer;
+			m_dsdaMovementFormat = m_dsdaMovementFormatEditBuffer;
+			m_momHighlightEnabled = m_momHighlightEditBuffer;
+            m_momLossThreshold = (std::max)(0.0f, m_momLossThresholdEditBuffer);
+			m_movementLimit = m_movementLimitEditBuffer;             xdre::setMovementLimit(m_movementLimit);
 
             if (xdre::getBlood() != m_bloodEnabled) {
                 xdre::toggleBlood();
+            }
+			
+			if (xdre::getBlockmapGrid() != m_blockmapGridEnabled) {
+                xdre::toggleBlockmapGrid();
+            }
+			
+			if (xdre::getThingHealth() != m_thingHealthEnabled) {
+                xdre::toggleThingHealth();
+            }
+
+            if (xdre::getThingIndex() != m_thingIndexEnabled) {
+                xdre::toggleThingIndex();
             }
 
             WriteConfig();
@@ -1719,50 +2211,9 @@ int MainWindow::GetSelectedComplevel() const {
     return 2; // default to doom 2
 }
 
-void MainWindow::CleanupBRSArtifacts(int winningIndex) {
-    {
-        std::lock_guard<std::mutex> lock(m_brsWorkerMutex);
-    }
-
-    std::string bfDir = GetBFDirectory();
-    std::string backupDir = GetBFBackupDirectory();
-
-    // ensure backup dir exists
-    Win32_CreateDirectory(backupDir);
-
-    // if a winner's found, preserve it in bf_backup
-    if (winningIndex >= 0) {
-#ifdef _WIN32
-        std::string srcDemo = bfDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
-        std::string dstDemo = backupDir + "\\outputdemo" + std::to_string(winningIndex) + ".lmp";
-
-        // give filesystem a brief window to flush handles
-        for (int retry = 0; retry < 5; ++retry) {
-            if (CopyFileA(srcDemo.c_str(), dstDemo.c_str(), FALSE)) {
-                break;
-            }
-            Sleep(20);
-        }
-#else
-        std::string srcDemo = bfDir + "/outputdemo" + std::to_string(winningIndex) + ".lmp";
-        std::string dstDemo = backupDir + "/outputdemo" + std::to_string(winningIndex) + ".lmp";
-
-        for (int retry = 0; retry < 5; ++retry) {
-            std::ifstream src(srcDemo, std::ios::binary);
-            if (src.is_open()) {
-                std::ofstream dst(dstDemo, std::ios::binary | std::ios::trunc);
-                if (dst.is_open()) {
-                    dst << src.rdbuf();
-                    break;
-                }
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-#endif
-    }
-
-    // erase temp folder
-    Win32_DeleteDirectory(bfDir);
+void MainWindow::CleanupBRSArtifacts() {
+    std::lock_guard<std::mutex> lock(m_brsWorkerMutex);
+    Win32_DeleteDirectory(GetBFDirectory());
 }
 
 static std::pair<int, int> BRS_ParseRange(const std::string& str, int minLimit, int maxLimit) {
@@ -1823,6 +2274,22 @@ void MainWindow::StartBRSSearch() {
     if (m_brsIsRunning) return;
     if (m_brsTics.empty()) return;
 
+    ++m_segmentLaunchGen;
+    m_segmentPendingReload = false;
+
+    // refresh options and re-save current demo state right before starting workers
+    xdre::getOptions(m_headerOptions);
+    {
+        std::string tempDemo = GetExeDirectory() + "brs_temp_input.lmp";
+        FILE* f = std::fopen(tempDemo.c_str(), "wb");
+        if (f) {
+            xdre::save(f);
+            std::fclose(f);
+            std::strncpy(m_brsDemoPath, tempDemo.c_str(), sizeof(m_brsDemoPath) - 1);
+            m_brsDemoPath[sizeof(m_brsDemoPath) - 1] = '\0';
+        }
+    }
+
     if (m_brsSupervisorThread.joinable())
         m_brsSupervisorThread.join();
 
@@ -1833,10 +2300,15 @@ void MainWindow::StartBRSSearch() {
     m_brsStatusMessage = "Partitioning ranges...";
     m_brsResultDetails = "";
 
-    // prepare range factors
+    // prepare range factors honoring m_movementLimit
+    int runMinLim    = (m_movementLimit == 0) ? -128 : -50;
+    int runMaxLim    = (m_movementLimit == 0) ?  127 :  50;
+    int strafeMinLim = (m_movementLimit == 0) ? -128 : (m_movementLimit == 1 ? -50 : 0);
+    int strafeMaxLim = (m_movementLimit == 0) ?  127 : (m_movementLimit == 1 ?  50 : 0);
+
     for (auto& tic : m_brsTics) {
-        auto r = BRS_ParseRange(tic.runStr, -50, 50);
-        auto s = BRS_ParseRange(tic.strafeStr, -50, 50);
+        auto r = BRS_ParseRange(tic.runStr, runMinLim, runMaxLim);
+        auto s = BRS_ParseRange(tic.strafeStr, strafeMinLim, strafeMaxLim);
         auto t = BRS_ParseRange(tic.turnStr, -128, 127);
         tic.runSize = std::abs(r.first - r.second) + 1;
         tic.strafeSize = std::abs(s.first - s.second) + 1;
@@ -2032,30 +2504,26 @@ void MainWindow::BRSWorkerThread() {
         }
     }
 
+    // enforce active movement limiter (0: no limit, 1: non-turbo [-50,50], 2: stroller [-25,25] run, 0 strafe)
+    for (auto& tic : ticsAscending) {
+        if (m_movementLimit == 1 || m_movementLimit == 2) {
+            auto r = BRS_ParseRange(tic.runStr, -50, 50);
+            snprintf(tic.runStr, sizeof(tic.runStr), "%d:%d", r.first, r.second);
+        }
+        if (m_movementLimit == 1) {
+            auto s = BRS_ParseRange(tic.strafeStr, -50, 50);
+            snprintf(tic.strafeStr, sizeof(tic.strafeStr), "%d:%d", s.first, s.second);
+        } else if (m_movementLimit == 2) {
+            strcpy(tic.strafeStr, "0:0");
+        }
+    }
+
     auto increments = BRS_ProduceRangeIncrements(winningPairs, ticsAscending);
     auto finalCombinations = BRS_ProduceFinalCombinations(increments, bestFoundSlices);
 
     int complevel = GetSelectedComplevel();
     int baseTic   = ticsAscending.empty() ? 0 : ticsAscending.front().ticNumber;
     int endTic    = ticsAscending.empty() ? 0 : ticsAscending.back().ticNumber;
-
-    // fetch active map and episode from ldre
-    int currentOptions[28] = { 0 };
-    xdre::getOptions(currentOptions);
-    int curEpisode = currentOptions[2];
-    int curMap     = currentOptions[3];
-    if (curMap <= 0) curMap = 1;
-
-    int levelStartTic = static_cast<int>(xdre::getLevelStartTic());
-    int localSkipTarget = 0;
-
-    if (levelStartTic > 0 && baseTic >= levelStartTic) {
-        // multilevel run: levelStartTic was set at leveltime == 1
-        localSkipTarget = (std::max)(0, baseTic - levelStartTic);
-    } else {
-        // first map or il demo: standard zero indexed baseline
-        localSkipTarget = (std::max)(0, baseTic - 1);
-    }
 
     std::string bfDir = GetBFDirectory();
     Win32_CreateDirectory(bfDir);
@@ -2140,6 +2608,12 @@ void MainWindow::BRSWorkerThread() {
     AppendCond(m_chkMomY, "vy");
     AppendCond(m_chkUse, "use");
     AppendCond(m_chkRng, "rng");
+	
+	if (m_chkAngle.active) {
+        const char* angNames[] = { "ang_lt", "ang_fa", "ang_deg", "ang_ba" };
+        int idx = (m_chkAngleType >= 0 && m_chkAngleType < 4) ? m_chkAngleType : 0;
+        AppendCond(m_chkAngle, angNames[idx]);
+    }
 
     if (m_chkItem.active) {
         const char* itemCodes[] = {
@@ -2218,17 +2692,9 @@ void MainWindow::BRSWorkerThread() {
         // outputdemo and queue will be local names
         cmd += "-recordfromto \"" + std::string(m_brsDemoPath) + "\" \"outputdemo" + std::to_string(w) + ".lmp\" ";
 
-        // append warp if not already present in extra args
-        if (std::string(m_brsExtraArgs).find("-warp") == std::string::npos) {
-            if (complevel == 3) {
-                cmd += "-warp " + std::to_string(curEpisode > 0 ? curEpisode : 1) + " " + std::to_string(curMap) + " ";
-            } else {
-                cmd += "-warp " + std::to_string(curMap) + " ";
-            }
-        }
-
-        // use local map skiptic
-        cmd += "-skiptic " + std::to_string(localSkipTarget) + " ";
+        // fast-forward in skip mode until exact 0-based .lmp tic index (dsda_DemoTic) is reached
+        cmd += "-skiptic " + std::to_string(baseTic + 100000) + " ";
+        cmd += "-bf_start_tic " + std::to_string(baseTic) + " ";
 
         if (std::string(m_brsExtraArgs).find("-complevel") == std::string::npos &&
             std::string(m_brsExtraArgs).find("-cl") == std::string::npos) {
@@ -2236,7 +2702,7 @@ void MainWindow::BRSWorkerThread() {
         }
 
         cmd += "-bf_queue \"brs_queue_" + std::to_string(w) + ".txt\" ";
-        cmd += "-quit_after_brute_force -build -command \"demo.join; ";
+        cmd += "-quit_after_brute_force -command \"";
 
         if (m_brsNomo) cmd += "bf.nomo; ";
 
@@ -2271,13 +2737,25 @@ void MainWindow::BRSWorkerThread() {
     bool isAcapSearch = false;
     double acapTarget = 0.0;
 
-    for (const auto* item : { &m_chkSpeed, &m_chkDamage, &m_chkX, &m_chkY, &m_chkZ, &m_chkMomX, &m_chkMomY, &m_chkRng }) {
+    auto ParseAcapVal = [](const char* s) -> double {
+        std::string str(s);
+        auto slash = str.find('/');
+        if (slash != std::string::npos) {
+            long long intPart = std::stoll(str.substr(0, slash));
+            unsigned long long fracPart = std::stoull(str.substr(slash + 1));
+            double mag = static_cast<double>(std::llabs(intPart)) + (static_cast<double>(fracPart) / 65536.0);
+            return (!str.empty() && str[0] == '-') ? -mag : mag;
+        }
+        return std::stod(str);
+    };
+
+    for (const auto* item : { &m_chkSpeed, &m_chkDamage, &m_chkX, &m_chkY, &m_chkZ, &m_chkMomX, &m_chkMomY, &m_chkRng, &m_chkAngle }) {
         if (item->active) {
             if (item->op == 6) isMinSearch = true;
             if (item->op == 7) isMaxSearch = true;
             if (item->op == 8) {
                 isAcapSearch = true;
-                try { acapTarget = std::stod(item->val); } catch (...) { acapTarget = 0.0; }
+                try { acapTarget = ParseAcapVal(item->val); } catch (...) { acapTarget = 0.0; }
             }
         }
     }
@@ -2489,23 +2967,56 @@ void MainWindow::BRSWorkerThread() {
     activeWorkers.clear();
 
     if (m_brsAbortRequested) {
-        CleanupBRSArtifacts(-1);
+        CleanupBRSArtifacts();
         m_brsStatusMessage = "Search aborted by user.";
     } else {
-        CleanupBRSArtifacts(m_brsWinningTaskIndex);
         if (m_brsWinningTaskIndex >= 0) {
-#ifdef _WIN32
-            std::string finalDemoPath = GetBFBackupDirectory() + "\\outputdemo" + std::to_string(m_brsWinningTaskIndex) + ".lmp";
-#else
-            std::string finalDemoPath = GetBFBackupDirectory() + "/outputdemo" + std::to_string(m_brsWinningTaskIndex) + ".lmp";
-#endif
-            m_brsStatusMessage = "Search complete: solution found (copied to " + finalDemoPath + ").";
+            int maxTargetTic = (std::max)(endTic, m_brsTargetTic);
+            int writeDepth = (maxTargetTic - baseTic) + 1;
+            std::string winLogPath = GetBFDirectory() + "/process_output" + std::to_string(m_brsWinningTaskIndex) + ".txt";
 
-            if (m_brsAutoLoadResult) {
-                m_brsPendingReloadPath = finalDemoPath;
+            std::vector<ParsedWinTicCmd> parsedCmds;
+            {
+                std::ifstream logIn(winLogPath);
+                std::string line;
+                while (std::getline(logIn, line)) {
+                    auto pos = line.find("BF_WIN_CMD ");
+                    if (pos != std::string::npos) {
+                        int frame = 0, fwd = 0, str = 0, turn = 0;
+                        unsigned int btns = 0;
+                        if (std::sscanf(line.c_str() + pos + 11, "%d: %d %d %d %u", &frame, &fwd, &str, &turn, &btns) == 5) {
+                            if (frame >= 0 && frame < writeDepth) {
+                                if ((int)parsedCmds.size() <= frame) parsedCmds.resize(frame + 1);
+                                parsedCmds[frame] = { frame, fwd, str, turn, btns };
+                            }
+                        }
+                    }
+                }
+            }
+
+            CleanupBRSArtifacts();
+
+            std::ostringstream summary;
+            summary << "Winning inputs starting at tic " << baseTic << ":\n";
+            for (const auto& c : parsedCmds) {
+                if (c.frame >= 0) {
+                    summary << "  Tic " << (baseTic + c.frame)
+                            << ": F=" << c.forwardmove
+                            << " S=" << c.sidemove
+                            << " T=" << ((c.angleturn + 128) >> 8)
+                            << " B=" << c.buttons << "\n";
+                }
+            }
+            m_brsResultDetails += summary.str();
+            m_brsStatusMessage = "Search complete: solution found (worker " + std::to_string(m_brsWinningTaskIndex) + ").";
+
+            if (!parsedCmds.empty()) {
+                m_brsPendingWinBaseTic = baseTic;
+                m_brsPendingWinCmds = std::move(parsedCmds);
                 m_brsPendingReload = true;
             }
         } else {
+            CleanupBRSArtifacts();
             m_brsStatusMessage = "Search finished: no matching condition found.";
         }
     }
@@ -2554,7 +3065,7 @@ void MainWindow::RenderBRSDialog() {
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(626.0f, 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(656.0f, 0), ImGuiCond_Always);
 
     if (ImGui::BeginPopupModal("Brute-force", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         
@@ -2716,6 +3227,22 @@ void MainWindow::RenderBRSDialog() {
         RenderCheckRow("X Mom", m_chkMomX);
         RenderCheckRow("Y Mom", m_chkMomY);
         RenderCheckRow("RNG Index", m_chkRng);
+		
+		// angle check
+        ImGui::Checkbox("Angle", &m_chkAngle.active);
+        ImGui::SameLine(105.0f);
+        ImGui::PushID("AngleCheck");
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::Combo("##op", &m_chkAngle.op, ops, 9); // includes acap
+        ImGui::SameLine();
+        const char* bfAngleUnits[] = { "LT", "FA", "Deg", "BA" };
+        ImGui::SetNextItemWidth(46.0f);
+        ImGui::Combo("##unit", &m_chkAngleType, bfAngleUnits, IM_ARRAYSIZE(bfAngleUnits));
+        ImGui::SameLine();
+        float remainingWidth = 100.0f - 46.0f - ImGui::GetStyle().ItemSpacing.x;
+        ImGui::SetNextItemWidth(remainingWidth);
+        ImGui::InputText("##val", m_chkAngle.val, sizeof(m_chkAngle.val));
+        ImGui::PopID();
 
         // item check
         ImGui::Checkbox("Item", &m_chkItem.active);
@@ -2764,6 +3291,7 @@ void MainWindow::RenderBRSDialog() {
         ImGui::Text("Preset:");
         ImGui::SameLine();
         const char* presets[] = {
+            "Same as source",
             "1", "2", "3", "4", "5",
             "Max Range (Pseudo)", "Max Range (True)",
             "lynx 1 (3 tics)", "lynx 2 (3 tics)", "lynx 3 (8-10 tics)"
@@ -2772,72 +3300,129 @@ void MainWindow::RenderBRSDialog() {
         ImGui::Combo("##AutoRangePreset", &m_brsAutoRangePreset, presets, IM_ARRAYSIZE(presets));
 
         ImGui::SameLine();
-        ImGui::Checkbox("Avoid Turbo (limit to 50)", &m_avoidTurbo);
+        bool applyAutoRanges = ImGui::Button("Apply Auto-Ranges to Tics");
 
         ImGui::SameLine();
-        if (ImGui::Button("Apply Auto-Ranges to Tics")) {
-            int runStrafeMax = m_avoidTurbo ? 50 : 127;
-            int runStrafeMin = m_avoidTurbo ? -50 : -128;
-            int turnMax = 127;
-            int turnMin = -128;
+        const char* limitLabels[] = { "Limit: None (Turbo)", "Limit: Non-Turbo", "Limit: Stroller" };
+        int limIdx = (m_movementLimit >= 0 && m_movementLimit <= 2) ? m_movementLimit : 1;
+        ImGui::TextDisabled("(%s)", limitLabels[limIdx]);
+
+        // gap based fire tic insertion row
+        ImGui::Checkbox("Auto-Fire (gap)", &m_brsAutoFireEnabled);
+        if (!m_brsAutoFireEnabled) ImGui::BeginDisabled();
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Start Tic:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(75.0f);
+        if (ImGui::InputInt("##AutoFireStart", &m_brsAutoFireStartTic)) {
+            if (m_brsAutoFireStartTic < 0) m_brsAutoFireStartTic = 0;
+        }
+        ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Gap:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(75.0f);
+        if (ImGui::InputInt("##AutoFireGap", &m_brsAutoFireGap)) {
+            if (m_brsAutoFireGap < 1) m_brsAutoFireGap = 1;
+        }
+        if (!m_brsAutoFireEnabled) ImGui::EndDisabled();
+
+        if (applyAutoRanges) {
+            int runMax    = (m_movementLimit == 0) ? 127 : 50;
+            int runMin    = (m_movementLimit == 0) ? -128 : -50;
+            int strafeMax = (m_movementLimit == 0) ? 127 : (m_movementLimit == 1 ? 50 : 0);
+            int strafeMin = (m_movementLimit == 0) ? -128 : (m_movementLimit == 1 ? -50 : 0);
+            int turnMax   = 127;
+            int turnMin   = -128;
+
+            // ensure tics are evaluated in ascending ticNumber order
+            std::sort(m_brsTics.begin(), m_brsTics.end(), [](const BRSTicItem& a, const BRSTicItem& b) {
+                return a.ticNumber < b.ticNumber;
+            });
 
             for (size_t i = 0; i < m_brsTics.size(); ++i) {
                 int targetTic = m_brsTics[i].ticNumber;
 
-                if (m_brsAutoRangePreset <= 4) {
-                    int rad = m_brsAutoRangePreset + 1;
+                if (m_brsAutoRangePreset == 0) {
                     int r = xdre::getTicRun(targetTic);
                     int s = xdre::getTicStrafe(targetTic);
                     int t = xdre::getTicTurn(targetTic);
 
-                    BRS_CalcAutoRange(r, rad, runStrafeMin, runStrafeMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
-                    BRS_CalcAutoRange(s, rad, runStrafeMin, runStrafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
+                    r = (std::max)(runMin, (std::min)(runMax, r));
+                    s = (std::max)(strafeMin, (std::min)(strafeMax, s));
+                    t = (std::max)(turnMin, (std::min)(turnMax, t));
+
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d", r);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d", s);
+                    snprintf(m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr), "%d", t);
+                } else if (m_brsAutoRangePreset >= 1 && m_brsAutoRangePreset <= 5) {
+                    int rad = m_brsAutoRangePreset;
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    BRS_CalcAutoRange(r, rad, runMin, runMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
+                    BRS_CalcAutoRange(s, rad, strafeMin, strafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
                     BRS_CalcAutoRange(t, rad, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
-                } else if (m_brsAutoRangePreset == 5) {
-                    strcpy(m_brsTics[i].runStr, "50:-50");
-                    strcpy(m_brsTics[i].strafeStr, "50:-50");
-                    strcpy(m_brsTics[i].turnStr, "32:-31");
                 } else if (m_brsAutoRangePreset == 6) {
-                    strcpy(m_brsTics[i].runStr, "50:-50");
-                    strcpy(m_brsTics[i].strafeStr, "50:-50");
-                    strcpy(m_brsTics[i].turnStr, "127:-128");
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d:%d", runMax, runMin);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d:%d", strafeMax, strafeMin);
+                    strcpy(m_brsTics[i].turnStr, "32:-31");
                 } else if (m_brsAutoRangePreset == 7) {
-                    int r = xdre::getTicRun(targetTic);
-                    int s = xdre::getTicStrafe(targetTic);
-                    int t = xdre::getTicTurn(targetTic);
-
-                    int rLow  = (std::max)(runStrafeMin, r - 1);
-                    int rHigh = (std::min)(runStrafeMax, r + 1);
-                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d:%d",
-                             (r == runStrafeMax) ? rHigh : rLow,
-                             (r == runStrafeMax) ? rLow  : rHigh);
-
-                    int sLow  = (std::max)(runStrafeMin, s - 1);
-                    int sHigh = (std::min)(runStrafeMax, s + 1);
-                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d:%d",
-                             (s == runStrafeMax) ? sHigh : sLow,
-                             (s == runStrafeMax) ? sLow  : sHigh);
-
-                    BRS_CalcAutoRange(t, 8, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d:%d", runMax, runMin);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d:%d", strafeMax, strafeMin);
+                    strcpy(m_brsTics[i].turnStr, "127:-128");
                 } else if (m_brsAutoRangePreset == 8) {
                     int r = xdre::getTicRun(targetTic);
                     int s = xdre::getTicStrafe(targetTic);
                     int t = xdre::getTicTurn(targetTic);
 
-                    BRS_CalcAutoRange(r, 1, runStrafeMin, runStrafeMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
-                    BRS_CalcAutoRange(s, 1, runStrafeMin, runStrafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
-                    BRS_CalcAutoRange(t, 6, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                    int rLow  = (std::max)(runMin, r - 1);
+                    int rHigh = (std::min)(runMax, r + 1);
+                    snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d:%d",
+                             (r == runMax) ? rHigh : rLow,
+                             (r == runMax) ? rLow  : rHigh);
+
+                    int sLow  = (std::max)(strafeMin, s - 1);
+                    int sHigh = (std::min)(strafeMax, s + 1);
+                    snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d:%d",
+                             (s == strafeMax) ? sHigh : sLow,
+                             (s == strafeMax) ? sLow  : sHigh);
+
+                    BRS_CalcAutoRange(t, 8, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
                 } else if (m_brsAutoRangePreset == 9) {
                     int r = xdre::getTicRun(targetTic);
                     int s = xdre::getTicStrafe(targetTic);
                     int t = xdre::getTicTurn(targetTic);
 
-                    r = (std::max)(runStrafeMin, (std::min)(runStrafeMax, r));
-                    s = (std::max)(runStrafeMin, (std::min)(runStrafeMax, s));
+                    BRS_CalcAutoRange(r, 1, runMin, runMax, m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr));
+                    BRS_CalcAutoRange(s, 1, strafeMin, strafeMax, m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr));
+                    BRS_CalcAutoRange(t, 6, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                } else if (m_brsAutoRangePreset == 10) {
+                    int r = xdre::getTicRun(targetTic);
+                    int s = xdre::getTicStrafe(targetTic);
+                    int t = xdre::getTicTurn(targetTic);
+
+                    r = (std::max)(runMin, (std::min)(runMax, r));
+                    s = (std::max)(strafeMin, (std::min)(strafeMax, s));
 
                     snprintf(m_brsTics[i].runStr, sizeof(m_brsTics[i].runStr), "%d", r);
                     snprintf(m_brsTics[i].strafeStr, sizeof(m_brsTics[i].strafeStr), "%d", s);
                     BRS_CalcAutoRange(t, 1, turnMin, turnMax, m_brsTics[i].turnStr, sizeof(m_brsTics[i].turnStr));
+                }
+
+                // apply gap based fire insertion strictly by actual demo ticNumber
+                if (m_brsAutoFireEnabled) {
+                    long long ticNum   = static_cast<long long>(m_brsTics[i].ticNumber);
+                    long long startTic = static_cast<long long>(m_brsAutoFireStartTic);
+                    long long gap      = (std::max)(1LL, static_cast<long long>(m_brsAutoFireGap));
+
+                    if (ticNum >= startTic && ((ticNum - startTic) % gap == 0)) {
+                        m_brsTics[i].fire = 1; // "Yes"
+                    } else {
+                        m_brsTics[i].fire = 0; // "No"
+                    }
                 }
             }
         }
@@ -2911,6 +3496,570 @@ void MainWindow::RenderBRSDialog() {
             ImGui::TextDisabled("Idle - awaiting search output...");
         }
         ImGui::EndChild();
+
+        ImGui::EndPopup();
+    }
+}
+
+std::string MainWindow::OpenSegmentFolderDialog() {
+#ifdef _WIN32
+    BROWSEINFOA bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.lpszTitle = "Select DSDA Segment Folder";
+    bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+
+    LPITEMIDLIST pidl = SHBrowseForFolderA(&bi);
+    if (pidl != nullptr) {
+        char path[MAX_PATH] = "";
+        bool ok = (SHGetPathFromIDListA(pidl, path) != FALSE);
+        CoTaskMemFree(pidl);
+        if (ok && path[0] != '\0') {
+            return std::string(path);
+        }
+    }
+#else
+    char path[PATH_MAX] = "";
+    std::string initDir = GetExeDirectory();
+    if (initDir.empty()) initDir = ".";
+
+    auto runDialogCmd = [](const std::string& cmd, char* outBuf, size_t outSize) -> bool {
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) return false;
+        bool gotLine = (fgets(outBuf, static_cast<int>(outSize), pipe) != nullptr);
+        int status = pclose(pipe);
+        return (gotLine && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    };
+
+    bool ok = false;
+    if (system("command -v kdialog >/dev/null 2>&1") == 0) {
+        std::string kdialogCmd = "kdialog --title \"Select DSDA Segment Folder\" --getexistingdirectory \"" + initDir + "\" 2>/dev/null";
+        ok = runDialogCmd(kdialogCmd, path, sizeof(path));
+    } else if (system("command -v zenity >/dev/null 2>&1") == 0) {
+        std::string zenityCmd = "zenity --file-selection --directory --title=\"Select DSDA Segment Folder\" --filename=\"" + initDir + "\" 2>/dev/null";
+        ok = runDialogCmd(zenityCmd, path, sizeof(path));
+    }
+
+    if (ok) {
+        std::string res(path);
+        while (!res.empty() && (res.back() == '\n' || res.back() == '\r')) {
+            res.pop_back();
+        }
+        return res;
+    }
+#endif
+    return "";
+}
+
+std::string MainWindow::OpenSegmentConfigDialog() {
+    char filename[MAX_PATH] = "";
+#ifdef _WIN32
+    OPENFILENAMEA ofn;
+    ZeroMemory(&ofn, sizeof(ofn));
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = NULL;
+    ofn.lpstrFilter = "DSDA Config Files (*.cfg)\0*.cfg\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFile = filename;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = "cfg";
+    ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+
+    if (GetOpenFileNameA(&ofn)) {
+        return std::string(filename);
+    }
+#else
+    std::string initDir = GetExeDirectory();
+    if (initDir.empty()) initDir = ".";
+
+    auto runDialogCmd = [](const std::string& cmd, char* outBuf, size_t outSize) -> bool {
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) return false;
+        bool gotLine = (fgets(outBuf, static_cast<int>(outSize), pipe) != nullptr);
+        int status = pclose(pipe);
+        return (gotLine && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    };
+
+    bool ok = false;
+    if (system("command -v kdialog >/dev/null 2>&1") == 0) {
+        std::string kdialogCmd = "kdialog --title \"Select Config File\" --getopenfilename \"" + initDir + "\" \"*.cfg|DSDA Config Files (*.cfg)\" 2>/dev/null";
+        ok = runDialogCmd(kdialogCmd, filename, sizeof(filename));
+    } else if (system("command -v zenity >/dev/null 2>&1") == 0) {
+        std::string zenityCmd = "zenity --file-selection --title=\"Select Config File\" --filename=\"" + initDir + "\" --file-filter=\"DSDA Config Files (*.cfg) | *.cfg\" --file-filter=\"All Files | *\" 2>/dev/null";
+        ok = runDialogCmd(zenityCmd, filename, sizeof(filename));
+    }
+
+    if (ok) {
+        std::string res(filename);
+        while (!res.empty() && (res.back() == '\n' || res.back() == '\r')) {
+            res.pop_back();
+        }
+        return res;
+    }
+#endif
+    return "";
+}
+
+static std::string FindLatestSegmentOutputDemo(const std::string& dir) {
+    std::string bestPath = "";
+    long long bestNum = -1; // 0 for base "output.lmp", >= 2 for "output-00002.lmp", etc.
+
+    auto ConsiderFilename = [&](const std::string& name, const std::string& fullPath) {
+        std::string lower = name;
+        for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        if (lower == "output.lmp") {
+            if (bestNum < 1) {
+                bestNum = 1;
+                bestPath = fullPath;
+            }
+            return;
+        }
+
+        // match "output-<digits>.lmp"
+        if (lower.rfind("output-", 0) == 0 && lower.size() > 11 &&
+            lower.substr(lower.size() - 4) == ".lmp") {
+            std::string numPart = lower.substr(7, lower.size() - 11);
+            bool allDigits = !numPart.empty();
+            for (char c : numPart) {
+                if (!std::isdigit(static_cast<unsigned char>(c))) {
+                    allDigits = false;
+                    break;
+                }
+            }
+            if (allDigits) {
+                try {
+                    long long idx = std::stoll(numPart);
+                    if (idx > bestNum) {
+                        bestNum = idx;
+                        bestPath = fullPath;
+                    }
+                } catch (...) {}
+            }
+        }
+    };
+
+#ifdef _WIN32
+    std::string searchPattern = dir + "\\output*.lmp";
+    WIN32_FIND_DATAA fd;
+    HANDLE hFind = FindFirstFileA(searchPattern.c_str(), &fd);
+    if (hFind != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+                ConsiderFilename(fd.cFileName, dir + "\\" + fd.cFileName);
+            }
+        } while (FindNextFileA(hFind, &fd));
+        FindClose(hFind);
+    }
+#else
+    DIR* d = opendir(dir.c_str());
+    if (d) {
+        struct dirent* entry;
+        while ((entry = readdir(d)) != nullptr) {
+            std::string fullPath = dir + "/" + entry->d_name;
+            struct stat st;
+            if (stat(fullPath.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+                ConsiderFilename(entry->d_name, fullPath);
+            }
+        }
+        closedir(d);
+    }
+#endif
+
+    return bestPath;
+}
+
+void MainWindow::LaunchSegmentInstance(bool withDemo) {
+    auto IsRelativePath = [](const std::string& p) -> bool {
+#ifdef _WIN32
+        return (p.find(":\\") == std::string::npos && p.find(":/") == std::string::npos);
+#else
+        return (!p.empty() && p[0] != '/');
+#endif
+    };
+
+    std::string segDir = m_segmentDirPath;
+    if (segDir.empty()) segDir = "dsda_segment";
+    if (IsRelativePath(segDir)) {
+        segDir = GetExeDirectory() + segDir;
+    }
+
+    // trim trailing slashes
+    while (segDir.size() > 1 && (segDir.back() == '\\' || segDir.back() == '/')) {
+        segDir.pop_back();
+    }
+
+    Win32_CreateDirectory(segDir);
+
+    #ifdef _WIN32
+    std::string exePath = segDir + "\\dsda-doom.exe";
+    #else
+    std::string exePath = "";
+    DIR* d = opendir(segDir.c_str());
+    if (d) {
+        struct dirent* entry;
+        while ((entry = readdir(d)) != nullptr) {
+            std::string name = entry->d_name;
+            std::string lower = name;
+            for (char& c : lower) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+
+            std::string candidate = segDir + "/" + name;
+            if (!FileExists(candidate)) continue;
+
+            // prefer exact case-insensitive "dsda-doom" binary if present
+            if (lower == "dsda-doom") {
+                exePath = candidate;
+                break;
+            }
+
+            // otherwise match any "dsda-doom*.appimage" regardless of case
+            if (exePath.empty() &&
+                lower.rfind("dsda-doom", 0) == 0 &&
+                HasExtension(lower, ".appimage")) {
+                exePath = candidate;
+                }
+        }
+        closedir(d);
+    }
+
+    if (exePath.empty()) {
+        m_segmentStatusMessage = "Error: dsda-doom executable (or dsda-doom*.AppImage) not found in " + segDir;
+        return;
+    }
+
+    // Ensure executable bit is set so users don't have to manually run chmod +x
+    struct stat exeStat;
+    if (stat(exePath.c_str(), &exeStat) == 0 && !(exeStat.st_mode & S_IXUSR)) {
+        chmod(exePath.c_str(), exeStat.st_mode | S_IXUSR | S_IXGRP | S_IXOTH);
+    }
+    #endif
+
+    if (!FileExists(exePath)) {
+        m_segmentStatusMessage = "Error: dsda-doom executable (or dsda-doom*.AppImage) not found in " + segDir;
+        return;
+    }
+
+    std::string cmd = "\"" + exePath + "\" ";
+
+    // hardcode iwad using brs logic
+    if (strlen(m_brsIwadPath) > 0) {
+        std::string iwad = m_brsIwadPath;
+        if (IsRelativePath(iwad)) {
+            iwad = GetExeDirectory() + iwad;
+        }
+        cmd += "-iwad \"" + iwad + "\" ";
+    }
+
+    // hardcode pwad using brs logic, resolving relative paths against ldre's directory
+    if (strlen(m_brsPwadPath) > 0) {
+        std::string pwadStr = m_brsPwadPath;
+        std::vector<std::string> pwadTokens;
+        std::string cur;
+        bool inQuotes = false;
+        for (char c : pwadStr) {
+            if (c == '"') {
+                inQuotes = !inQuotes;
+            } else if (!inQuotes && std::isspace(static_cast<unsigned char>(c))) {
+                if (!cur.empty()) { pwadTokens.push_back(cur); cur.clear(); }
+            } else {
+                cur.push_back(c);
+            }
+        }
+        if (!cur.empty()) pwadTokens.push_back(cur);
+
+        if (!pwadTokens.empty()) {
+            cmd += "-file ";
+            for (const auto& rawTok : pwadTokens) {
+                std::string resolved = rawTok;
+                if (IsRelativePath(resolved)) {
+                    std::string inExeDir = GetExeDirectory() + resolved;
+                    std::string inLastDir = m_lastDirectory.empty() ? "" : (m_lastDirectory + "/" + resolved);
+                    if (FileExists(inExeDir)) {
+                        resolved = inExeDir;
+                    } else if (!inLastDir.empty() && FileExists(inLastDir)) {
+                        resolved = inLastDir;
+                    } else {
+                        resolved = inExeDir;
+                    }
+                }
+                cmd += "\"" + resolved + "\" ";
+            }
+        }
+    }
+	
+	// hardcode -config only when checkbox is enabled and path is non-empty
+    if (m_segmentUseCustomConfig && strlen(m_segmentConfigPath) > 0) {
+        std::string cfgPath = m_segmentConfigPath;
+        if (IsRelativePath(cfgPath)) {
+            cfgPath = GetExeDirectory() + cfgPath;
+        }
+        cmd += "-config \"" + cfgPath + "\" ";
+    }
+
+    if (withDemo) {
+        int complevel = GetSelectedComplevel();
+
+        int headerOpts[28] = { 0 };
+        xdre::getOptions(headerOpts);
+        int curEpisode = headerOpts[2];
+        int curMap     = headerOpts[3];
+        if (curMap <= 0) curMap = 1;
+
+        if (!headerOpts[27]) {
+            cmd += "-shorttics ";
+        } else {
+            cmd += "-longtics ";
+        }
+
+        // hardcode complevel using brs logic
+        if (std::string(m_segmentExtraArgs).find("-complevel") == std::string::npos &&
+            std::string(m_segmentExtraArgs).find("-cl") == std::string::npos) {
+            cmd += "-complevel " + std::to_string(complevel) + " ";
+        }
+
+        int levelStartTic = static_cast<int>(xdre::getLevelStartTic());
+        if (levelStartTic > 0 && std::string(m_segmentExtraArgs).find("-warp") == std::string::npos) {
+            if (complevel == 3) {
+                cmd += "-warp " + std::to_string(curEpisode > 0 ? curEpisode : 1) + " " + std::to_string(curMap) + " ";
+            } else {
+                cmd += "-warp " + std::to_string(curMap) + " ";
+            }
+        }
+
+        // hardcode -skiptic TIC
+        int skipTic = 0;
+        if (levelStartTic > 0 && m_segmentSkipTic >= levelStartTic) {
+            skipTic = (std::max)(0, m_segmentSkipTic - levelStartTic - 1);
+        } else {
+            skipTic = (std::max)(0, m_segmentSkipTic - 1);
+        }
+        cmd += "-skiptic " + std::to_string(skipTic) + " ";
+
+        // hardcode -game_speed (clamped 5..1000)
+        int gameSpeed = (std::max)(5, (std::min)(1000, m_segmentGameSpeed));
+        if (std::string(m_segmentExtraArgs).find("-game_speed") == std::string::npos) {
+            cmd += "-game_speed " + std::to_string(gameSpeed) + " ";
+        }
+
+        // create output directory next to ldre executable
+        std::string outDemoDir = GetSegmentDemoOutputDirectory();
+        Win32_CreateDirectory(outDemoDir);
+
+#ifdef _WIN32
+        std::string outDemoPath = outDemoDir + "\\output.lmp";
+#else
+        std::string outDemoPath = outDemoDir + "/output.lmp";
+#endif
+
+        // re-save current editor state right before launching in case tics changed
+        if (strlen(m_segmentDemoPath) > 0) {
+            FILE* f = std::fopen(m_segmentDemoPath, "wb");
+            if (f) {
+                xdre::save(f);
+                std::fclose(f);
+            }
+            cmd += "-recordfromto \"" + std::string(m_segmentDemoPath) + "\" \"" + outDemoPath + "\" ";
+        }
+
+        if (strlen(m_segmentExtraArgs) > 0) {
+            cmd += std::string(m_segmentExtraArgs) + " ";
+        }
+		
+		cmd += "-tas ";
+    }
+
+    WriteConfig();
+
+#ifdef _WIN32
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+
+    std::vector<char> cmdBuf(cmd.begin(), cmd.end());
+    cmdBuf.push_back('\0');
+
+    if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, 0, NULL, segDir.c_str(), &si, &pi)) {
+        CloseHandle(pi.hThread);
+        if (withDemo) {
+            HANDLE hProc = pi.hProcess;
+            uint64_t launchGen = ++m_segmentLaunchGen;
+            std::string watchDir = GetSegmentDemoOutputDirectory();
+            std::thread([this, hProc, watchDir, launchGen]() {
+                WaitForSingleObject(hProc, INFINITE);
+                CloseHandle(hProc);
+                if (m_segmentAutoLoadResult && m_segmentLaunchGen.load() == launchGen) {
+                    std::string latest = FindLatestSegmentOutputDemo(watchDir);
+                    if (!latest.empty() && FileExists(latest)) {
+                        m_segmentPendingReloadPath = latest;
+                        m_segmentPendingReload = true;
+                    }
+                }
+            }).detach();
+        } else {
+            CloseHandle(pi.hProcess);
+        }
+        m_segmentStatusMessage = withDemo
+            ? "Launched isolated dsda-doom instance."
+            : "Launched isolated dsda-doom instance (no demo).";
+    } else {
+        m_segmentStatusMessage = "Failed to launch dsda-doom process.";
+    }
+#else
+    std::vector<std::string> argStrings = SplitCommandLinePosix(cmd);
+    if (!argStrings.empty()) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            if (chdir(segDir.c_str()) != 0) {
+                _exit(127);
+            }
+            std::vector<char*> argv;
+            argv.reserve(argStrings.size() + 1);
+            for (auto& s : argStrings) {
+                argv.push_back(&s[0]);
+            }
+            argv.push_back(nullptr);
+            execvp(argv[0], argv.data());
+            _exit(127);
+        } else if (pid > 0) {
+            if (withDemo) {
+                uint64_t launchGen = ++m_segmentLaunchGen;
+                std::string watchDir = GetSegmentDemoOutputDirectory();
+                std::thread([this, pid, watchDir, launchGen]() {
+                    int status = 0;
+                    waitpid(pid, &status, 0);
+                    if (m_segmentAutoLoadResult && m_segmentLaunchGen.load() == launchGen) {
+                        std::string latest = FindLatestSegmentOutputDemo(watchDir);
+                        if (!latest.empty() && FileExists(latest)) {
+                            m_segmentPendingReloadPath = latest;
+                            m_segmentPendingReload = true;
+                        }
+                    }
+                }).detach();
+            }
+            m_segmentStatusMessage = withDemo
+                ? "Launched isolated dsda-doom instance."
+                : "Launched isolated dsda-doom instance (no demo).";
+        } else {
+            m_segmentStatusMessage = "Failed to fork dsda-doom process.";
+        }
+    }
+#endif
+}
+
+void MainWindow::RenderSegmentDialog() {
+    if (m_showSegmentDialog) {
+        ImGui::OpenPopup("Slowmotion/Segment");
+        m_showSegmentDialog = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (ImGui::BeginPopupModal("Slowmotion/Segment", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const float labelWidth = 130.0f;
+        const float fieldWidth = 300.0f;
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Instance Folder:");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(fieldWidth);
+        ImGui::InputText("##SegmentFolder", m_segmentDirPath, sizeof(m_segmentDirPath));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##SegDir")) {
+            std::string chosenDir = OpenSegmentFolderDialog();
+            if (!chosenDir.empty()) {
+                std::strncpy(m_segmentDirPath, chosenDir.c_str(), sizeof(m_segmentDirPath) - 1);
+                m_segmentDirPath[sizeof(m_segmentDirPath) - 1] = '\0';
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset to Default##SegDir")) {
+            std::strncpy(m_segmentDirPath, "dsda_segment", sizeof(m_segmentDirPath) - 1);
+            m_segmentDirPath[sizeof(m_segmentDirPath) - 1] = '\0';
+        }
+
+        ImGui::Checkbox("Custom Config:##UseCustomCfg", &m_segmentUseCustomConfig);
+        ImGui::SameLine(labelWidth);
+        if (!m_segmentUseCustomConfig) ImGui::BeginDisabled();
+        ImGui::SetNextItemWidth(fieldWidth);
+        ImGui::InputText("##SegmentConfigPath", m_segmentConfigPath, sizeof(m_segmentConfigPath));
+        ImGui::SameLine();
+        if (ImGui::Button("Browse...##SegCfg")) {
+            std::string chosenCfg = OpenSegmentConfigDialog();
+            if (!chosenCfg.empty()) {
+                std::strncpy(m_segmentConfigPath, chosenCfg.c_str(), sizeof(m_segmentConfigPath) - 1);
+                m_segmentConfigPath[sizeof(m_segmentConfigPath) - 1] = '\0';
+            }
+        }
+        if (!m_segmentUseCustomConfig) ImGui::EndDisabled();
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Skip Tic:");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::InputInt("##SegmentSkipTic", &m_segmentSkipTic)) {
+            if (m_segmentSkipTic < 0) m_segmentSkipTic = 0;
+        }
+
+        // game speed [5,1000]
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Game Speed:");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::InputInt("##SegmentGameSpeed", &m_segmentGameSpeed, 0, 0, ImGuiInputTextFlags_CharsDecimal)) {
+            if (m_segmentGameSpeed < 5) m_segmentGameSpeed = 5;
+            if (m_segmentGameSpeed > 1000) m_segmentGameSpeed = 1000;
+        }
+
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Extra Params:");
+        ImGui::SameLine(labelWidth);
+        ImGui::SetNextItemWidth(fieldWidth);
+        ImGui::InputText("##SegmentExtraArgs", m_segmentExtraArgs, sizeof(m_segmentExtraArgs));
+
+        ImGui::Separator();
+
+        if (ImGui::Button("Launch Game", ImVec2(130, 0))) {
+            LaunchSegmentInstance(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(100, 0))) {
+            WriteConfig();
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (!m_segmentStatusMessage.empty()) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("%s", m_segmentStatusMessage.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Launch DSDA instance without demo")) {
+            LaunchSegmentInstance(false);
+        }
+
+        const char* loadLatestLabel = "Load Latest Segment Demo";
+        float loadBtnWidth = ImGui::CalcTextSize(loadLatestLabel).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        float rightEdge = ImGui::GetWindowContentRegionMax().x;
+        ImGui::SameLine();
+        ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(), rightEdge - loadBtnWidth));
+
+        if (ImGui::Button(loadLatestLabel)) {
+            std::string watchDir = GetSegmentDemoOutputDirectory();
+            std::string latest = FindLatestSegmentOutputDemo(watchDir);
+            if (!latest.empty() && FileExists(latest)) {
+                m_segmentPendingReloadPath = latest;
+                m_segmentPendingReload = true;
+                m_segmentStatusMessage = "Loaded latest segment demo.";
+            } else {
+                m_segmentStatusMessage = "No segment output demo found.";
+            }
+        }
 
         ImGui::EndPopup();
     }

@@ -45,6 +45,7 @@ static char* playback_name;
 static char* playback_filename;
 
 extern int demo_tics;
+int bf_lmp_tic = 0;
 
 dboolean demoplayback;
 dboolean userdemo;
@@ -236,8 +237,6 @@ void dsda_JoinDemo(ticcmd_t* cmd) {
 
   if (cmd)
     dsda_JoinDemoCmd(cmd);
-  else
-    dsda_QueueJoin();
 
   dsda_MergeExDemoFeatures();
 }
@@ -253,7 +252,7 @@ void dsda_TryPlaybackOneTick(ticcmd_t* cmd) {
   else {
     G_ReadOneTick(cmd, &playback_p);
 
-    ++demo_tics;
+    ++bf_lmp_tic;
   }
 
   if (ended) {

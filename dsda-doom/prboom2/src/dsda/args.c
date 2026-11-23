@@ -253,6 +253,11 @@ static arg_config_t arg_config[dsda_arg_count] = {
     "reads brute force range definitions sequentially from a queue file",
     arg_string,
   },
+  [dsda_arg_bf_start_tic] = {
+    "-bf_start_tic", NULL, NULL,
+    "joins playback and starts brute force at the exact 0-based demo tic index",
+    arg_int, 0, INT_MAX,
+  },
   [dsda_arg_first_input] = {
     "-first_input", NULL, NULL,
     "builds the first frame F S T",

@@ -66,11 +66,16 @@ enum class XCmd {
     Use,
     TurnStepLeft,
     TurnStepRight,
+	RunStepFwd,
+    RunStepBwd,
+    StrafeStepLeft,
+    StrafeStepRight,
     PrevTic,
     NextTic,
     CopyTic,
     DeleteTic,
     NewTic,
+	ClearMovement,
     ToggleBlood,
 	ToggleAutomap,
 	ToggleAutomapFollow,
@@ -80,6 +85,9 @@ enum class XCmd {
     PanAutomapRight,
     PanAutomapUp,
     PanAutomapDown,
+	ToggleBlockmap,
+	ToggleThingHealth,
+    ToggleThingIndex,
     SetSavepoint,
     UnsetSavepoint,
     Load,
@@ -102,6 +110,14 @@ enum class XCmd {
     ForwardDemo
 };
 
+struct ParsedWinTicCmd {
+    int frame = -1;
+    int forwardmove = 0;
+    int sidemove = 0;
+    int angleturn = 0;
+    unsigned int buttons = 0;
+};
+
 class MainWindow {
 public:
     MainWindow(int argc = 0, char** argv = nullptr);
@@ -119,9 +135,12 @@ public:
     void ForceExit() { m_running = false; }
 
     XCmd GetCommandForString(const std::string& str) const {
-        const auto& activeMap = xdre::getAutomapActive() ? m_automapStringToCommandMap : m_stringToCommandMap;
-        auto it = activeMap.find(str);
-        return (it != activeMap.end()) ? it->second : XCmd::None;
+        if (xdre::getAutomapActive()) {
+            auto it = m_automapStringToCommandMap.find(str);
+            return (it != m_automapStringToCommandMap.end()) ? it->second : XCmd::None;
+        }
+        auto it = m_stringToCommandMap.find(str);
+        return (it != m_stringToCommandMap.end()) ? it->second : XCmd::None;
     }
 
     const std::string& GetStringForConfig(const std::string& action) const {
@@ -130,6 +149,14 @@ public:
         auto it = activeCfg.find(action);
         return (it != activeCfg.end()) ? it->second : emptyStr;
     }
+	
+	bool IsInputBufferEmpty() const {
+		return m_inputBuffer[0] == '\0';
+	}
+	
+	bool IsTicListHovered() const {
+		return m_ticListHovered;
+	}
 	
 	// window position properties
     int GetGuiPosX() const { return m_guiPosX; }
@@ -145,7 +172,7 @@ private:
     void StartBRSSearch();
     void AbortBRSSearch();
     void BRSWorkerThread();
-    void CleanupBRSArtifacts(int winningIndex);
+    void CleanupBRSArtifacts();
 	void DetectStartupWads(int argc, char** argv);
 
     bool m_showBRSDialog = false;
@@ -166,14 +193,17 @@ private:
     char m_brsExtraArgs[256] = "-bf_quiet -nosound -nomusic -nojoy -geom 320x240";
     int m_brsThreadGoal = 0;
     bool m_brsNomo = false;
-    int m_brsAutoRangePreset = 2; // Default range 3
-	bool m_brsAutoLoadResult = true;
-    bool m_brsAutoLoadResultEditBuffer = true;
+    int m_brsAutoRangePreset = 3; // Default range 3
     int m_brsInitialTic = 0;
 	int m_brsTargetTic = 0;
+	bool m_brsAutoFireEnabled = false;
+    int  m_brsAutoFireStartTic = 0;
+    int  m_brsAutoFireGap = 1;
 	int GetSelectedComplevel() const;
     std::atomic<bool> m_brsPendingReload{false};
     std::string m_brsPendingReloadPath = "";
+	int m_brsPendingWinBaseTic = -1;
+    std::vector<ParsedWinTicCmd> m_brsPendingWinCmds;
 
     // brs conditions
     struct BRSCheckItem {
@@ -191,6 +221,8 @@ private:
     int m_chkItemIndex = 0; // index into item dropdown
     BRSCheckItem m_chkArmour, m_chkHealth;
 	BRSCheckItem m_chkUse;
+	BRSCheckItem m_chkAngle;
+    int m_chkAngleType = 3; // 0: Longtics, 1: Fine Angles, 2: Degrees, 3: Byte Angles (or sync with m_selectedAngleType)
     char m_brsExtraChecks[256] = "";
 
     // brs background engine
@@ -205,6 +237,27 @@ private:
     std::string m_brsResultDetails = "";
 
     void ProcessInputField(const char* input);
+	
+	// dsda segmentation
+	void RenderSegmentDialog();
+    void LaunchSegmentInstance(bool withDemo = true);
+	std::string OpenSegmentFolderDialog();
+    std::string OpenSegmentConfigDialog();
+	
+	bool m_showSegmentDialog = false;
+    char m_segmentDirPath[MAX_PATH] = "dsda_segment";
+    bool m_segmentUseCustomConfig = false;
+    char m_segmentConfigPath[MAX_PATH] = "";
+    char m_segmentExtraArgs[250] = "";
+    char m_segmentDemoPath[MAX_PATH] = "";
+    int  m_segmentSkipTic = 0;
+    int  m_segmentGameSpeed = 50;
+    std::string m_segmentStatusMessage = "";
+	bool m_segmentAutoLoadResult = true;
+    bool m_segmentAutoLoadResultEditBuffer = true;
+    std::atomic<bool> m_segmentPendingReload{false};
+    std::string m_segmentPendingReloadPath = "";
+    std::atomic<uint64_t> m_segmentLaunchGen{0};
     
     // ui layout
     void RenderMenuBar();
@@ -234,11 +287,36 @@ private:
 	bool m_showOptionsDialog = false;
 	bool m_bloodEnabled = false;
     bool m_bloodEditBuffer = false;
+	bool m_blockmapGridEnabled = false;
+    bool m_blockmapGridEditBuffer = false;
+	bool m_thingHealthEnabled = false;
+    bool m_thingHealthEditBuffer = false;
+    bool m_thingIndexEnabled = false;
+    bool m_thingIndexEditBuffer = false;
 	int m_automapPanSpeed = 2;
     int m_automapPanSpeedEditBuffer = 2;
+	bool m_dsdaMovementFormat = false;
+    bool m_dsdaMovementFormatEditBuffer = false;
+	int m_movementLimit = 1; // 0: no limit, 1: non-turbo, 2: stroller
+    int m_movementLimitEditBuffer = 1;
+	
+	// momentum loss highlight
+    bool m_momHighlightEnabled = true;
+    bool m_momHighlightEditBuffer = true;
+    float m_momLossThreshold = 5.0f;
+    float m_momLossThresholdEditBuffer = 5.0f;
+
+    std::vector<std::pair<double, double>> m_ticMomentumCache;
+	std::vector<uint8_t> m_ticMomentumValid;
+    unsigned int m_lastMomCachedTic = static_cast<unsigned int>(-1);
+	
 	bool m_invertTicScrub = true;
     bool m_invertTicScrubEditBuffer = true;
     unsigned int m_lastRenderedTic = 0xFFFFFFFF;
+	int m_ticSelStart = -1;
+    int m_ticSelEnd = -1;
+    bool m_ticShiftSelecting = false;
+    bool m_ticListHovered = false;
 
     // config and keybindings
     std::unordered_map<std::string, std::string> m_configToStringMap;

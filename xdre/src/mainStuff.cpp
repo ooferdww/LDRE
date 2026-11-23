@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
 
     SDL_GLContext glContext = SDL_GL_CreateContext(guiWindow);
     SDL_GL_MakeCurrent(guiWindow, glContext);
-    SDL_GL_SetSwapInterval(1);
+    SDL_GL_SetSwapInterval(0);
 
     // init imgui
     IMGUI_CHECKVERSION();
@@ -128,29 +128,47 @@ int main(int argc, char** argv) {
         }
     }
 
+    const Uint32 guiWinID  = SDL_GetWindowID(guiWindow);
+    const Uint32 doomWinID = sdl_window ? SDL_GetWindowID(sdl_window) : 0;
+
     // main loop
     while (mainWindow.IsRunning()) {
         SDL_Event event;
-        if (SDL_WaitEventTimeout(&event, 16)) {
-            do {
-                ImGui_ImplSDL2_ProcessEvent(&event);
+        while (SDL_PollEvent(&event)) {
+            Uint32 evWinID = 0;
+            if (event.type == SDL_WINDOWEVENT) evWinID = event.window.windowID;
+            else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) evWinID = event.key.windowID;
+            else if (event.type == SDL_TEXTINPUT || event.type == SDL_TEXTEDITING) evWinID = event.text.windowID;
+            else if (event.type == SDL_MOUSEMOTION) evWinID = event.motion.windowID;
+            else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) evWinID = event.button.windowID;
+            else if (event.type == SDL_MOUSEWHEEL) evWinID = event.wheel.windowID;
 
-                if (event.type == SDL_QUIT) {
-                    mainWindow.RequestExit();
-                } else if (event.type == SDL_WINDOWEVENT) {
-                    if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
-                        // check if guiwindow or sdl_close was triggered
-                        Uint32 winId = event.window.windowID;
-                        if (winId == SDL_GetWindowID(guiWindow) || (sdl_window && winId == SDL_GetWindowID(sdl_window))) {
-                            mainWindow.RequestExit();
-                        }
-                    } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
-                               event.window.event == SDL_WINDOWEVENT_LEAVE) {
-                        ImGui::GetIO().ClearInputKeys();
-                        ImGui::GetIO().InputQueueCharacters.clear();
+            // only route gui window events (or global events) into imgui
+            if (evWinID == 0 || evWinID == guiWinID) {
+                ImGui_ImplSDL2_ProcessEvent(&event);
+            }
+
+            // if user clicked inside dsda-doom preview window, pull focus back to ldre
+            if (doomWinID != 0 && evWinID == doomWinID && event.type == SDL_MOUSEBUTTONDOWN) {
+                SDL_RaiseWindow(guiWindow);
+                SDL_SetWindowInputFocus(guiWindow);
+                SDL_StartTextInput();
+            }
+
+            if (event.type == SDL_QUIT) {
+                mainWindow.RequestExit();
+            } else if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    Uint32 winId = event.window.windowID;
+                    if (winId == guiWinID || (doomWinID != 0 && winId == doomWinID)) {
+                        mainWindow.RequestExit();
                     }
+                } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
+                           event.window.windowID == guiWinID) {
+                    ImGui::GetIO().ClearInputKeys();
+                    ImGui::GetIO().InputQueueCharacters.clear();
                 }
-            } while (SDL_PollEvent(&event));
+            }
         }
 
         // advance tick
@@ -172,8 +190,8 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-        // non-blocking swap
         SDL_GL_SwapWindow(guiWindow);
+        SDL_Delay(2);
     }
 
     // save final window coordinates (space if minimized)
@@ -262,28 +280,45 @@ int main(int argc, char** argv) {
         }
     }
 
+    const Uint32 guiWinID  = SDL_GetWindowID(guiWindow);
+    const Uint32 doomWinID = sdl_window ? SDL_GetWindowID(sdl_window) : 0;
+
     // main loop
     while (mainWindow.IsRunning()) {
         SDL_Event event;
-        if (SDL_WaitEventTimeout(&event, 16)) {
-            do {
-                ImGui_ImplSDL2_ProcessEvent(&event);
+        while (SDL_PollEvent(&event)) {
+            Uint32 evWinID = 0;
+            if (event.type == SDL_WINDOWEVENT) evWinID = event.window.windowID;
+            else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) evWinID = event.key.windowID;
+            else if (event.type == SDL_TEXTINPUT || event.type == SDL_TEXTEDITING) evWinID = event.text.windowID;
+            else if (event.type == SDL_MOUSEMOTION) evWinID = event.motion.windowID;
+            else if (event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP) evWinID = event.button.windowID;
+            else if (event.type == SDL_MOUSEWHEEL) evWinID = event.wheel.windowID;
 
-                if (event.type == SDL_QUIT) {
-                    mainWindow.RequestExit();
-                } else if (event.type == SDL_WINDOWEVENT) {
-                    if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
-                        Uint32 winId = event.window.windowID;
-                        if (winId == SDL_GetWindowID(guiWindow) || (sdl_window && winId == SDL_GetWindowID(sdl_window))) {
-                            mainWindow.RequestExit();
-                        }
-                    } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST ||
-                               event.window.event == SDL_WINDOWEVENT_LEAVE) {
-                        ImGui::GetIO().ClearInputKeys();
-                        ImGui::GetIO().InputQueueCharacters.clear();
+            if (evWinID == 0 || evWinID == guiWinID) {
+                ImGui_ImplSDL2_ProcessEvent(&event);
+            }
+
+            if (doomWinID != 0 && evWinID == doomWinID && event.type == SDL_MOUSEBUTTONDOWN) {
+                SDL_RaiseWindow(guiWindow);
+                SDL_SetWindowInputFocus(guiWindow);
+                SDL_StartTextInput();
+            }
+
+            if (event.type == SDL_QUIT) {
+                mainWindow.RequestExit();
+            } else if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    Uint32 winId = event.window.windowID;
+                    if (winId == guiWinID || (doomWinID != 0 && winId == doomWinID)) {
+                        mainWindow.RequestExit();
                     }
+                } else if (event.window.event == SDL_WINDOWEVENT_FOCUS_LOST &&
+                           event.window.windowID == guiWinID) {
+                    ImGui::GetIO().ClearInputKeys();
+                    ImGui::GetIO().InputQueueCharacters.clear();
                 }
-            } while (SDL_PollEvent(&event));
+            }
         }
 
         // advance tick
@@ -304,6 +339,7 @@ int main(int argc, char** argv) {
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), guiRenderer);
 
         SDL_RenderPresent(guiRenderer);
+		SDL_Delay(8);
     }
 
     // save final window coordinates (space if minimized)

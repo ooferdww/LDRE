@@ -58,6 +58,7 @@
 #include "m_bbox.h"
 #include "d_main.h"
 #include "m_menu.h"
+#include "p_tick.h"
 
 #include "dsda/id_list.h"
 #include "dsda/input.h"
@@ -1594,6 +1595,102 @@ static void AM_drawMline
   }
 }
 
+#ifdef XDRE
+int xdre_draw_blockmap = 0;
+
+static void AM_drawBlockmapGrid(void)
+{
+  fixed_t x, y;
+  fixed_t start, end;
+  mline_t ml;
+  fixed_t minlen, extx, exty;
+  fixed_t minx, miny;
+  fixed_t blocksize = 128 << MAPBITS;
+  fixed_t orgx = bmaporgx >> FRACTOMAPBITS;
+  fixed_t orgy = bmaporgy >> FRACTOMAPBITS;
+  fixed_t max_bx = orgx + (bmapwidth * blocksize);
+  fixed_t max_by = orgy + (bmapheight * blocksize);
+  // color option
+  const int bmap_color = 96;
+
+  if (!xdre_draw_blockmap || bmapwidth <= 0 || bmapheight <= 0)
+    return;
+
+  minlen = M_DoubleToInt(sqrt((float)m_w * (float)m_w + (float)m_h * (float)m_h));
+  extx = (minlen - m_w) / 2;
+  exty = (minlen - m_h) / 2;
+
+  minx = m_x;
+  miny = m_y;
+
+  // vertical blockmap lines (anchored at bmaporgx)
+  start = minx - extx;
+  if (start < orgx)
+    start = orgx;
+  else if ((start - orgx) % blocksize)
+    start -= ((start - orgx) % blocksize);
+
+  end = minx + minlen - extx;
+  if (end > max_bx)
+    end = max_bx;
+
+  for (x = start; x <= end; x += blocksize)
+  {
+    ml.a.x = x;
+    ml.b.x = x;
+    ml.a.y = (miny - exty < orgy) ? orgy : (miny - exty);
+    ml.b.y = (miny - exty + minlen > max_by) ? max_by : (miny - exty + minlen);
+    if (ml.a.y >= ml.b.y)
+      continue;
+
+    if (automap_rotate)
+    {
+      AM_rotatePoint(&ml.a);
+      AM_rotatePoint(&ml.b);
+    }
+    else
+    {
+      AM_SetMPointFloatValue(&ml.a);
+      AM_SetMPointFloatValue(&ml.b);
+    }
+    AM_drawMline(&ml, bmap_color);
+  }
+
+  // horizontal blockmap lines (anchored at bmaporgy)
+  start = miny - exty;
+  if (start < orgy)
+    start = orgy;
+  else if ((start - orgy) % blocksize)
+    start -= ((start - orgy) % blocksize);
+
+  end = miny + minlen - exty;
+  if (end > max_by)
+    end = max_by;
+
+  for (y = start; y <= end; y += blocksize)
+  {
+    ml.a.x = (minx - extx < orgx) ? orgx : (minx - extx);
+    ml.b.x = (minx - extx + minlen > max_bx) ? max_bx : (minx - extx + minlen);
+    ml.a.y = y;
+    ml.b.y = y;
+    if (ml.a.x >= ml.b.x)
+      continue;
+
+    if (automap_rotate)
+    {
+      AM_rotatePoint(&ml.a);
+      AM_rotatePoint(&ml.b);
+    }
+    else
+    {
+      AM_SetMPointFloatValue(&ml.a);
+      AM_SetMPointFloatValue(&ml.b);
+    }
+    AM_drawMline(&ml, bmap_color);
+  }
+}
+#endif
+
 //
 // AM_drawGrid()
 //
@@ -2534,7 +2631,9 @@ static void AM_drawThings(void)
 
       color = mapcolor_p->sprt;
 
-      if (t->flags & MF_FRIEND && !t->player)
+      if (t->player)
+        color = 112;
+      else if (t->flags & MF_FRIEND && !t->player)
         color = mapcolor_p->frnd;
       /* cph 2006/07/30 - Show count-as-kills in red. */
       else if ((t->flags & (MF_COUNTKILL | MF_CORPSE)) == MF_COUNTKILL)
@@ -2664,6 +2763,155 @@ static void AM_drawPlayerTrail(void)
     }
   }
 }
+
+#ifdef XDRE
+int xdre_draw_thing_health = 0;
+int xdre_draw_thing_index = 0;
+
+// 7-segment bitmask for digits '0'..'9':
+// bit 0: top, bit 1: top-right, bit 2: bottom-right,
+// bit 3: bottom, bit 4: bottom-left, bit 5: top-left, bit 6: middle
+static const unsigned char xdre_digit_segs[10] = {
+  0x3F, // 0
+  0x06, // 1
+  0x5B, // 2
+  0x4F, // 3
+  0x66, // 4
+  0x6D, // 5
+  0x7D, // 6
+  0x07, // 7
+  0x7F, // 8
+  0x6F  // 9
+};
+
+static void AM_drawVectorDigit(int digit, fixed_t cx, fixed_t cy, fixed_t half_w, fixed_t half_h, int color)
+{
+  unsigned char mask;
+  mline_t segs[7];
+  int count = 0;
+
+  if (digit < 0 || digit > 9)
+    return;
+
+  mask = xdre_digit_segs[digit];
+
+  if (mask & 0x01) { segs[count].a.x = cx - half_w; segs[count].a.y = cy + half_h; segs[count].b.x = cx + half_w; segs[count].b.y = cy + half_h; count++; }
+  if (mask & 0x02) { segs[count].a.x = cx + half_w; segs[count].a.y = cy + half_h; segs[count].b.x = cx + half_w; segs[count].b.y = cy;          count++; }
+  if (mask & 0x04) { segs[count].a.x = cx + half_w; segs[count].a.y = cy;          segs[count].b.x = cx + half_w; segs[count].b.y = cy - half_h; count++; }
+  if (mask & 0x08) { segs[count].a.x = cx - half_w; segs[count].a.y = cy - half_h; segs[count].b.x = cx + half_w; segs[count].b.y = cy - half_h; count++; }
+  if (mask & 0x10) { segs[count].a.x = cx - half_w; segs[count].a.y = cy;          segs[count].b.x = cx - half_w; segs[count].b.y = cy - half_h; count++; }
+  if (mask & 0x20) { segs[count].a.x = cx - half_w; segs[count].a.y = cy + half_h; segs[count].b.x = cx - half_w; segs[count].b.y = cy;          count++; }
+  if (mask & 0x40) { segs[count].a.x = cx - half_w; segs[count].a.y = cy;          segs[count].b.x = cx + half_w; segs[count].b.y = cy;          count++; }
+
+  for (int s = 0; s < count; s++)
+  {
+    if (automap_rotate)
+    {
+      AM_rotatePoint(&segs[s].a);
+      AM_rotatePoint(&segs[s].b);
+    }
+    else
+    {
+      AM_SetMPointFloatValue(&segs[s].a);
+      AM_SetMPointFloatValue(&segs[s].b);
+    }
+    AM_drawMline(&segs[s], color);
+  }
+}
+
+static void AM_drawNumberInBox(int value, fixed_t cx, fixed_t cy, fixed_t box_r, fixed_t max_half_h, int color)
+{
+  char label[16];
+  fixed_t inner_w, cell_w, half_w, half_h, start_x;
+  int len, k;
+
+  snprintf(label, sizeof(label), "%d", value);
+  len = (int)strlen(label);
+  if (len <= 0)
+    return;
+
+  inner_w = FixedMul(box_r, (fixed_t)(1.64f * FRACUNIT));
+  cell_w  = inner_w / len;
+  half_w  = FixedMul(cell_w, (fixed_t)(0.36f * FRACUNIT));
+  half_h  = FixedMul(half_w, (fixed_t)(1.65f * FRACUNIT));
+
+  if (half_h > max_half_h)
+  {
+    half_h = max_half_h;
+    half_w = FixedMul(half_h, (fixed_t)(0.60f * FRACUNIT));
+  }
+
+  if (MTOF(half_w * 2) < 3)
+    return;
+
+  start_x = cx - (cell_w * (len - 1)) / 2;
+  for (k = 0; k < len; k++)
+  {
+    AM_drawVectorDigit(label[k] - '0', start_x + k * cell_w, cy, half_w, half_h, color);
+  }
+}
+
+static void AM_drawThingOverlays(void)
+{
+  thinker_t *th;
+  int index = 1;
+
+  if ((!xdre_draw_thing_health && !xdre_draw_thing_index) || dsda_RevealAutomap() != 2)
+    return;
+
+  // walk thinkercap in the exact same order as x_setThingCheck
+  for (th = thinkercap.next; th != &thinkercap; th = th->next)
+  {
+    mobj_t *t;
+    mpoint_t p;
+    angle_t angle;
+    fixed_t box_r;
+    dboolean show_hp, show_idx;
+    int cur_index;
+
+    if ((void *)th->function != (void *)P_MobjThinker)
+      continue;
+
+    t = (mobj_t *)th;
+    if (t->player)
+      continue;
+
+    cur_index = index++;
+
+    AM_GetMobjPosition(t, &p, &angle);
+
+    // cull things outside the visible automap bounding box
+    if (!(players[displayplayer].cheats & CF_NOCLIP) &&
+        (p.x < am_frame.bbox[BOXLEFT] || p.x > am_frame.bbox[BOXRIGHT] ||
+         p.y < am_frame.bbox[BOXBOTTOM] || p.y > am_frame.bbox[BOXTOP]))
+    {
+      continue;
+    }
+
+    box_r = BETWEEN(4 << FRACBITS, 256 << FRACBITS, t->radius) >> FRACTOMAPBITS;
+    show_hp  = xdre_draw_thing_health && (t->flags & MF_SHOOTABLE) && (t->health > 0);
+    show_idx = xdre_draw_thing_index;
+
+    if (show_hp && show_idx)
+    {
+      fixed_t quarter_h = FixedMul(box_r, (fixed_t)(0.32f * FRACUNIT));
+      fixed_t y_offset  = FixedMul(box_r, (fixed_t)(0.42f * FRACUNIT));
+      AM_drawNumberInBox(cur_index, p.x, p.y + y_offset, box_r, quarter_h, 197); // index (top)
+      AM_drawNumberInBox(t->health, p.x, p.y - y_offset, box_r, quarter_h, 4);   // hp (bottom)
+    }
+    else if (show_idx)
+    {
+      fixed_t max_h = FixedMul(box_r, (fixed_t)(0.62f * FRACUNIT));
+      AM_drawNumberInBox(cur_index, p.x, p.y, box_r, max_h, 197); // index (center)
+    }
+    else if (show_hp)
+    {
+      fixed_t max_h = FixedMul(box_r, (fixed_t)(0.62f * FRACUNIT));
+      AM_drawNumberInBox(t->health, p.x, p.y, box_r, max_h, 4);   // hp (center)
+    }
+  }
+}
+#endif
 
 //
 // AM_drawMarks()
@@ -2971,6 +3219,11 @@ void AM_Drawer (dboolean minimap)
 
   if (automap_grid)
     AM_drawGrid(mapcolor_p->grid);      //jff 1/7/98 grid default color
+#ifdef XDRE
+  if (xdre_draw_blockmap) {
+    AM_drawBlockmapGrid();
+  }
+#endif
   AM_drawWalls();
   AM_drawPlayers();
   if (dsda_IntConfig(dsda_config_map_traces) && dsda_RevealAutomap() == 2)
@@ -2993,6 +3246,10 @@ void AM_Drawer (dboolean minimap)
   }
 
   AM_drawMarks();
+#ifdef XDRE
+if (xdre_draw_thing_health || xdre_draw_thing_index)
+    AM_drawThingOverlays();
+#endif
 
   V_EndAutomapDraw();
 }

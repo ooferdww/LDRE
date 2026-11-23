@@ -1527,7 +1527,33 @@ void G_Ticker (void)
 
   dsda_EvaluateSkipModeGTicker();
 
-  if (!dsda_SkipMode() && gamestate == GS_LEVEL)
+  if (gamestate == GS_LEVEL && dsda_Flag(dsda_arg_bf_start_tic))
+  {
+    extern int bf_lmp_tic;
+    static dboolean bf_started = false;
+    int target_lmp_tic = dsda_SimpleIntArg(dsda_arg_bf_start_tic);
+
+    if (!bf_started && bf_lmp_tic >= target_lmp_tic)
+    {
+      bf_started = true;
+      if (demoplayback)
+        dsda_JoinDemo(NULL);
+
+      if (!dsda_BuildMode())
+      {
+        dsda_UpdateIntConfig(dsda_config_strict_mode, 0, false);
+        dsda_EnterBuildMode();
+        dsda_UpdateStrictMode();
+      }
+
+      {
+        dsda_arg_t *arg = dsda_Arg(dsda_arg_command);
+        if (arg->found)
+          dsda_InterpretConsoleCommands(arg->value.v_string, false, true);
+      }
+    }
+  }
+  else if (!dsda_SkipMode() && gamestate == GS_LEVEL)
   {
     DO_ONCE
       dsda_arg_t *arg;

@@ -38,12 +38,20 @@ int x_initSize(void);
 void x_clearMapSavepoints(void);
 void x_clearUserSavepoint(void);
 void x_clearAllSavepoints(void);
+void x_invalidateSavepointsFrom(int tic);
 int x_getSavepointTic(int dest);
 int x_setSavepoint(int isUserSave);
 int x_loadSavepoint(int dest);
 void x_shutdown(void);
 void x_initLongticsDefault(void);
 int x_getLevelStartTic(void);
+
+int x_getBlockmapGrid(void);
+void x_setBlockmapGrid(int enabled);
+int x_getThingHealth(void);
+void x_setThingHealth(int enabled);
+int x_getThingIndex(void);
+void x_setThingIndex(int enabled);
 
 #ifdef __cplusplus
 }

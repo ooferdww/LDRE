@@ -36,6 +36,10 @@ typedef enum {
   dsda_bf_ammo_5,
   dsda_bf_bmapwidth,
   dsda_bf_used,
+  dsda_bf_ang_lt,
+  dsda_bf_ang_fa,
+  dsda_bf_ang_deg,
+  dsda_bf_ang_ba,
   dsda_bf_attribute_max,
 
   dsda_bf_line_skip = 0,
@@ -117,3 +121,4 @@ dboolean dsda_LoadNextBFQueueSlice(void);
 void dsda_CopyBruteForceCommand(ticcmd_t* cmd);
 void dsda_SetBruteForceTargetFrame(int frame);
 int dsda_GetBruteForceTargetFrame(void);
+unsigned int dsda_GetBFAngle(short type);

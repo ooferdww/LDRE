@@ -110,10 +110,7 @@ void goBack(int numTics);
 int getHeaderSize(void);
 
 static void invalidateSavepointsAfter(int tic) {
-    /* if savepoint is ahead of current section, clear it */
-    if (x_getSavepointTic(tic) >= tic) {
-        x_clearUserSavepoint();
-    }
+    x_invalidateSavepointsFrom(tic);
 }
 
 /* tic padding for multiplayer */
@@ -408,6 +405,9 @@ void goBack(int numTics) {
     if (destTic < 1) {
         destTic = 1;
     }
+	
+	/* if seeking to or prior to any savepoint, delete savepoints from destTic onward */
+    x_invalidateSavepointsFrom(destTic);
 
     /* enforce savepoint boundary */
     if (savepointStyle == SpStyle::SP_USER) {
@@ -1099,6 +1099,40 @@ static inline signed short toAngleTurn(signed short val) {
     return longtics ? val : static_cast<signed short>(val << 8);
 }
 
+/* movement functions */
+static int s_movementLimit = 1; /* 0: no limit, 1: non-turbo, 2: stroller */
+
+static signed char clampRunValue(int val) {
+    if (s_movementLimit == 2) { /* stroller [-25, 25] */
+        return static_cast<signed char>(std::max(-25, std::min(25, val)));
+    }
+    if (s_movementLimit == 1) { /* non-turbo [-50,50] */
+        return static_cast<signed char>(std::max(-50, std::min(50, val)));
+    }
+    /* no limit [-127,127], -128 is demomarker */
+    return static_cast<signed char>(std::max(-127, std::min(127, val)));
+}
+
+static signed char clampStrafeValue(int val) {
+    if (s_movementLimit == 2) { /* stroller 0 */
+        return 0;
+    }
+    if (s_movementLimit == 1) { /* non-turbo [-50,50] */
+        return static_cast<signed char>(std::max(-50, std::min(50, val)));
+    }
+    /* no-limit [-127,127], -128 is possible to write but impossible to replicate with turbo so it's disallowed */
+    return static_cast<signed char>(std::max(-127, std::min(127, val)));
+}
+
+void xdre::setMovementLimit(int mode) {
+    if (mode < 0 || mode > 2) mode = 1;
+    s_movementLimit = mode;
+}
+
+int xdre::getMovementLimit() {
+    return s_movementLimit;
+}
+
 void xdre::transpose(bool direction, char mode) {
     if (mode > 2) return;
     auto tic = getActiveTic();
@@ -1113,14 +1147,14 @@ void xdre::transpose(bool direction, char mode) {
 
     if (!direction) {
         if (mode != 1) {
-            tic->forwardmove = -sidemove;
-            tic->sidemove = forwardmove;
+            tic->forwardmove = clampRunValue(-sidemove);
+            tic->sidemove = clampStrafeValue(forwardmove);
         }
         if (mode != 2) tic->angleturn += angleStep;
     } else {
         if (mode != 1) {
-            tic->forwardmove = sidemove;
-            tic->sidemove = -forwardmove;
+            tic->forwardmove = clampRunValue(sidemove);
+            tic->sidemove = clampStrafeValue(-forwardmove);
         }
         if (mode != 2) tic->angleturn -= angleStep;
     }
@@ -1131,8 +1165,7 @@ void xdre::transpose(bool direction, char mode) {
 void xdre::run(signed char val) {
     auto tic = getActiveTic();
     if (!tic) return;
-    if (val == -128) val = -127;
-    tic->forwardmove = val;
+    tic->forwardmove = clampRunValue(val);
     goBack(0);
     display();
 }
@@ -1140,7 +1173,39 @@ void xdre::run(signed char val) {
 void xdre::strafe(signed char val) {
     auto tic = getActiveTic();
     if (!tic) return;
-    tic->sidemove = val;
+    tic->sidemove = clampStrafeValue(val);
+    goBack(0);
+    display();
+}
+
+void xdre::runStepFwd() {
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->forwardmove = clampRunValue(static_cast<int>(tic->forwardmove) + 1);
+    goBack(0);
+    display();
+}
+
+void xdre::runStepBwd() {
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->forwardmove = clampRunValue(static_cast<int>(tic->forwardmove) - 1);
+    goBack(0);
+    display();
+}
+
+void xdre::strafeStepLeft() {
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->sidemove = clampStrafeValue(static_cast<int>(tic->sidemove) - 1);
+    goBack(0);
+    display();
+}
+
+void xdre::strafeStepRight() {
+    auto tic = getActiveTic();
+    if (!tic) return;
+    tic->sidemove = clampStrafeValue(static_cast<int>(tic->sidemove) + 1);
     goBack(0);
     display();
 }
@@ -1396,6 +1461,10 @@ unsigned int xdre::getCurrentTic() {
     return gametic - 1;
 }
 
+extern "C" unsigned int x_getCurrentLmpTic(void) {
+    return xdre::getCurrentTic();
+}
+
 unsigned int xdre::getSavepointTic() {
     return x_getSavepointTic(gametic);
 }
@@ -1464,6 +1533,55 @@ int xdre::getTicTurn(int ticIndex) {
     return curTics[ticIndex].angleturn / divisor;
 }
 
+std::vector<xdre::TicData> xdre::getTicDataRange(int startTic, int endTic) {
+    std::vector<TicData> result;
+    const auto& curTics = tics[displayplayer];
+    if (curTics.empty()) return result;
+
+    if (startTic > endTic) std::swap(startTic, endTic);
+    startTic = std::max(0, startTic);
+    endTic = std::min(static_cast<int>(curTics.size()) - 1, endTic);
+    if (startTic > endTic) return result;
+
+    result.reserve(static_cast<std::size_t>(endTic - startTic + 1));
+    for (int i = startTic; i <= endTic; ++i) {
+        const ticcmd_t& cmd = curTics[static_cast<std::size_t>(i)];
+        TicData td;
+        td.forwardmove = cmd.forwardmove;
+        td.sidemove = cmd.sidemove;
+        td.angleturn = cmd.angleturn;
+        td.buttons = cmd.buttons;
+        result.push_back(td);
+    }
+    return result;
+}
+
+bool xdre::appendTicsToEnd(const std::vector<TicData>& newTics) {
+    if (newTics.empty()) return false;
+
+    // remember current playback offset for displayplayer so appending at the end doesn't corrupt iterators
+    std::ptrdiff_t curOffset = std::distance(tics[displayplayer].begin(), nextTic[displayplayer]);
+
+    for (const auto& td : newTics) {
+        ticcmd_t cmd{};
+        cmd.forwardmove = td.forwardmove;
+        cmd.sidemove = td.sidemove;
+        // Enforce movement limiter on pasted values as well
+        cmd.forwardmove = clampRunValue(cmd.forwardmove);
+        cmd.sidemove = clampStrafeValue(cmd.sidemove);
+        cmd.angleturn = td.angleturn;
+        cmd.buttons = td.buttons;
+        tics[displayplayer].push_back(cmd);
+    }
+
+    // restore displayplayer iterator and pad any other active multiplayer slots
+    nextTic[displayplayer] = tics[displayplayer].begin() + std::min<std::ptrdiff_t>(curOffset, static_cast<std::ptrdiff_t>(tics[displayplayer].size()));
+    padPlayersToLength(tics[displayplayer].size());
+
+    display();
+    return true;
+}
+
 unsigned int xdre::getLevelStartTic() {
     return static_cast<unsigned int>(x_getLevelStartTic());
 }
@@ -1494,6 +1612,33 @@ void xdre::panAutomap(int dx, int dy) {
 void xdre::zoomAutomap(int direction) {
     XDRE_DoZoomAutomap(direction);
     display();
+}
+
+void xdre::toggleBlockmapGrid() {
+    x_setBlockmapGrid(x_getBlockmapGrid() ? 0 : 1);
+    display();
+}
+
+bool xdre::getBlockmapGrid() {
+    return x_getBlockmapGrid() ? true : false;
+}
+
+void xdre::toggleThingHealth() {
+    x_setThingHealth(x_getThingHealth() ? 0 : 1);
+    display();
+}
+
+bool xdre::getThingHealth() {
+    return x_getThingHealth() ? true : false;
+}
+
+void xdre::toggleThingIndex() {
+    x_setThingIndex(x_getThingIndex() ? 0 : 1);
+    display();
+}
+
+bool xdre::getThingIndex() {
+    return x_getThingIndex() ? true : false;
 }
 
 /* graveyard of currently defunct functions

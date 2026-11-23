@@ -75,6 +75,10 @@ namespace xdre {
     void setTurnStep(int step);
     void turnStepLeft();
     void turnStepRight();
+	void runStepFwd();
+    void runStepBwd();
+    void strafeStepLeft();
+    void strafeStepRight();
 
     void setSavepointStyle(int style);
     void setLinedefCheck(int linedef);
@@ -117,6 +121,19 @@ namespace xdre {
     int getTicStrafe(int ticIndex);
     int getTicTurn(int ticIndex);
 	
+	struct TicData {
+        signed char forwardmove = 0;
+        signed char sidemove = 0;
+        signed short angleturn = 0;
+        unsigned char buttons = 0;
+    };
+
+    std::vector<TicData> getTicDataRange(int startTic, int endTic);
+    bool appendTicsToEnd(const std::vector<TicData>& newTics);
+	
+	void setMovementLimit(int mode);
+    int getMovementLimit();
+	
 	unsigned int getLevelStartTic();
 	
 	void toggleAutomap();
@@ -125,6 +142,12 @@ namespace xdre {
     bool getAutomapFollow();
 	void panAutomap(int dx, int dy);
 	void zoomAutomap(int direction);
+	void toggleBlockmapGrid();
+    bool getBlockmapGrid();
+    void toggleThingHealth();
+    bool getThingHealth();
+    void toggleThingIndex();
+    bool getThingIndex();
 };
 
 

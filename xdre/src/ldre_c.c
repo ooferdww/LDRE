@@ -34,13 +34,14 @@
 
 #define XDRE_SAVEGAMESIZE (16 * 1024 * 1024)
 
-// extern void dsda_SetCompatibilityLevel(int complevel);
+extern int xdre_draw_blockmap;
+extern int xdre_draw_thing_health;
+extern int xdre_draw_thing_index;
 extern void G_XDRE_SetDemoOptions(int no_monsters, int respawn, int fast);
 extern void RecalculateDrawnSubsectors(void);
 extern int totalleveltimes;
 extern dboolean setsizeneeded;
 extern byte* savebuffer;
-// extern size_t save_size;
 extern void P_SetSaveBuffer(byte *buf, int size);
 extern byte* demobuffer;
 extern dboolean respawnmonsters;
@@ -68,6 +69,7 @@ float angles = 16384.0f;
 
 typedef struct {
     int tic;
+    int lmp_tic;
     byte* save;
     size_t size;
     size_t capacity;
@@ -507,6 +509,7 @@ void x_clearMapSavepoints(void) {
             savepoints[i].save = NULL;
         }
         savepoints[i].tic = 0;
+        savepoints[i].lmp_tic = 0;
         savepoints[i].size = 0;
         savepoints[i].capacity = 0;
     }
@@ -523,6 +526,25 @@ void x_clearAllSavepoints(void) {
     save_p = savebuffer = NULL;
 }
 
+void x_invalidateSavepointsFrom(int tic) {
+    int i;
+
+    if (savepoints[0].tic >= tic) {
+        x_clearUserSavepoint();
+    }
+
+    for (i = 1; i < MAXSSP; ++i) {
+        if (savepoints[i].save && savepoints[i].tic >= tic) {
+            free(savepoints[i].save);
+            savepoints[i].save = NULL;
+            savepoints[i].tic = 0;
+            savepoints[i].lmp_tic = 0;
+            savepoints[i].size = 0;
+            savepoints[i].capacity = 0;
+        }
+    }
+}
+
 static int x_getSavepointIndex(int dest) {
     int index = -1;
     int savetic = 0;
@@ -531,13 +553,13 @@ static int x_getSavepointIndex(int dest) {
     if (map > MAXSSP - 1)
         map = MAXSSP - 1;
 
-    if (savepoints[0].save && savepoints[0].tic <= dest) {
+    if (savepoints[0].save && savepoints[0].tic < dest) {
         index = 0;
         savetic = savepoints[0].tic;
     }
 
     for (; map > 0; --map) {
-        if (savetic <= savepoints[map].tic && savepoints[map].tic <= dest) {
+        if (savetic <= savepoints[map].tic && savepoints[map].tic < dest) {
             index = map;
             break;
         }
@@ -580,6 +602,10 @@ int x_setSavepoint(int isUserSave) {
     }
 
     savepoints[map].tic = gametic;
+    if (map > 0) {
+        extern unsigned int x_getCurrentLmpTic(void);
+        savepoints[map].lmp_tic = (int)x_getCurrentLmpTic();
+    }
 
     /* pass full buffer to avoid overloading CheckSaveGame */
     P_SetSaveBuffer(savepoints[map].save, (int)savepoints[map].capacity);
@@ -786,14 +812,38 @@ int x_getLevelStartTic(void) {
         return 0;
 
     /* Direct lookup in the map savepoint array */
-    if (savepoints[map].save && savepoints[map].tic > 0)
-        return savepoints[map].tic;
+    if (savepoints[map].save && savepoints[map].lmp_tic > 0)
+        return savepoints[map].lmp_tic;
 
     /* fallback: search backwards for the nearest recorded map boundary */
     for (int m = map; m > 0; --m) {
-        if (savepoints[m].save && savepoints[m].tic > 0)
-            return savepoints[m].tic;
+        if (savepoints[m].save && savepoints[m].lmp_tic > 0)
+            return savepoints[m].lmp_tic;
     }
 
     return 0;
+}
+
+int x_getBlockmapGrid(void) {
+    return xdre_draw_blockmap;
+}
+
+void x_setBlockmapGrid(int enabled) {
+    xdre_draw_blockmap = enabled ? 1 : 0;
+}
+
+int x_getThingHealth(void) {
+    return xdre_draw_thing_health;
+}
+
+void x_setThingHealth(int enabled) {
+    xdre_draw_thing_health = enabled ? 1 : 0;
+}
+
+int x_getThingIndex(void) {
+    return xdre_draw_thing_index;
+}
+
+void x_setThingIndex(int enabled) {
+    xdre_draw_thing_index = enabled ? 1 : 0;
 }

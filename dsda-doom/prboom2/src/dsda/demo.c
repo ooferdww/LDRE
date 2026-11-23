@@ -313,6 +313,7 @@ void dsda_InitDemoRecording(void) {
   dsda_demo_write_buffer_p = dsda_demo_write_buffer;
 
   dsda_demo_write_buffer_length = INITIAL_DEMO_BUFFER_SIZE;
+  largest_real_offset = 0;
 
   demo_tics = 0;
 }
@@ -865,7 +866,7 @@ void dsda_ApplyAndPreserveDemoData(const ticcmd_t* cmds, int count) {
   int i;
   extern void G_WriteTiccmdToBuffer(ticcmd_t* cmd);
 
-  if (!dsda_demo_write_buffer || count <= 0)
+  if (!dsda_demo_write_buffer)
     return;
 
   // let the engine serialize winning tics with their own layout

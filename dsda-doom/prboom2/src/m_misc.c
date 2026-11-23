@@ -710,9 +710,14 @@ void M_LoadDefaults (void)
   else
   {
     const char* configdir = I_ConfigDir();
-    int len = snprintf(NULL, 0, "%s/dsda-doom.cfg", configdir);
+#ifdef XDRE
+    const char* cfgname = "ldre.cfg"; // read from ldre.cfg if ldre core to avoid conflict
+#else
+    const char* cfgname = "dsda-doom.cfg";
+#endif
+    int len = snprintf(NULL, 0, "%s/%s", configdir, cfgname);
     defaultfile = Z_Malloc(len + 1);
-    snprintf(defaultfile, len + 1, "%s/dsda-doom.cfg", configdir);
+    snprintf(defaultfile, len + 1, "%s/%s", configdir, cfgname);
   }
 
   lprintf(LO_DEBUG, " default file: %s\n", defaultfile);

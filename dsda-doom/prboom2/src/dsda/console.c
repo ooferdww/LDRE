@@ -63,7 +63,7 @@
 #define target_player players[consoleplayer]
 
 #define CONSOLE_TEXT_FLAGS (VPT_ALIGN_TOP | VPT_EX_TEXT)
-#define CONSOLE_ENTRY_SIZE 64
+#define CONSOLE_ENTRY_SIZE 512
 
 #define CF_NEVER  0x00
 #define CF_DEMO   0x01
@@ -916,6 +916,38 @@ static dboolean console_BruteForceTargetFrame(const char* command, const char* a
   return true;
 }
 
+static dboolean dsda_ParseBFConditionValue(const char* str, int attr_i, fixed_t* out_val) {
+  int int_part = 0;
+  unsigned int frac_part = 0;
+  double dval = 0.0;
+  char* endptr = NULL;
+
+  // non-fixed-point attributes stay plain integers
+  if (attr_i != dsda_bf_x && attr_i != dsda_bf_y && attr_i != dsda_bf_z &&
+      attr_i != dsda_bf_momx && attr_i != dsda_bf_momy && attr_i != dsda_bf_speed) {
+    return sscanf(str, "%d", out_val) == 1;
+  }
+
+  // dsda int format
+  if (strchr(str, '/')) {
+    if (sscanf(str, "%d/%u", &int_part, &frac_part) == 2) {
+      int64_t mag = ((int64_t)abs(int_part) << FRACBITS) + (int64_t)frac_part;
+      *out_val = (str[0] == '-') ? (fixed_t)(-mag) : (fixed_t)mag;
+      return true;
+    }
+    return false;
+  }
+
+  // ldre six point float format
+  dval = strtod(str, &endptr);
+  if (endptr != str) {
+    *out_val = (fixed_t)llround(dval * (double)FRACUNIT);
+    return true;
+  }
+
+  return false;
+}
+
 static dboolean console_BruteForceStart(const char* command, const char* args) {
   int depth;
   int forwardmove_min, forwardmove_max;
@@ -962,8 +994,9 @@ static dboolean console_BruteForceStart(const char* command, const char* args) {
 
     for (i = 0; conditions[i]; ++i) {
       fixed_t value;
-      char attr_s[4] = { 0 };
+      char attr_s[16] = { 0 };
       char oper_s[5] = { 0 };
+      char val_s[32] = { 0 };
 
       if (sscanf(conditions[i], " skip %i", &value) == 1) {
         if (value >= numlines || value < 0)
@@ -1001,7 +1034,7 @@ static dboolean console_BruteForceStart(const char* command, const char* args) {
 
         dsda_AddMiscBruteForceCondition(dsda_bf_lack_item, attr_i);
       }
-      else if (sscanf(conditions[i], " %3[a-zA-Z] %4[a-zA-Z><!=] %i", attr_s, oper_s, &value) == 3) {
+      else if (sscanf(conditions[i], " %15[a-zA-Z_] %4[a-zA-Z><!=] %31s", attr_s, oper_s, val_s) == 3) {
         int attr_i, oper_i;
 
         if (oper_s[0] == '=' && !oper_s[1])
@@ -1012,6 +1045,9 @@ static dboolean console_BruteForceStart(const char* command, const char* args) {
             break;
 
         if (attr_i == dsda_bf_attribute_max)
+          return false;
+
+        if (!dsda_ParseBFConditionValue(val_s, attr_i, &value))
           return false;
 
         for (oper_i = dsda_bf_limit_trio_zero; oper_i < dsda_bf_limit_trio_max; ++oper_i)
@@ -1032,7 +1068,7 @@ static dboolean console_BruteForceStart(const char* command, const char* args) {
 
         dsda_AddBruteForceCondition(attr_i, oper_i, value);
       }
-      else if (sscanf(conditions[i], " %3s %4s", attr_s, oper_s) == 2) {
+      else if (sscanf(conditions[i], " %15[a-zA-Z_] %4s", attr_s, oper_s) == 2) {
         int attr_i, oper_i;
 
         for (attr_i = 0; attr_i < dsda_bf_attribute_max; ++attr_i)

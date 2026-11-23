@@ -319,6 +319,7 @@ static void I_GetEvent(void)
   while (SDL_PollEvent(Event))
   {
     switch (Event->type) {
+#ifndef XDRE
       case SDL_KEYDOWN:
 #ifdef __APPLE__
         if (Event->key.keysym.mod & KMOD_GUI)
@@ -416,6 +417,7 @@ static void I_GetEvent(void)
         event.text = Event->text.text;
         D_PostEvent(&event);
         break;
+#endif
 
       case SDL_WINDOWEVENT:
         if (Event->window.windowID == windowid)
@@ -1543,6 +1545,9 @@ static dboolean MouseIsInWindow(void)
 
 static dboolean MouseShouldBeGrabbed()
 {
+#ifdef XDRE
+  return false;
+#endif
   // never grab the mouse when in screensaver mode
 
   //if (screensaver_mode)

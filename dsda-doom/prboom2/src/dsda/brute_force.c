@@ -127,6 +127,10 @@ const char* dsda_bf_attribute_names[dsda_bf_attribute_max] = {
   [dsda_bf_ammo_5] = "am5",
   [dsda_bf_bmapwidth] = "bmw",
   [dsda_bf_used] = "use",
+  [dsda_bf_ang_lt] = "ang_lt",
+  [dsda_bf_ang_fa] = "ang_fa",
+  [dsda_bf_ang_deg] = "ang_deg",
+  [dsda_bf_ang_ba] = "ang_ba",
 };
 
 const char* dsda_bf_misc_names[dsda_bf_misc_max] = {
@@ -188,6 +192,10 @@ static dboolean fixed_point_attribute[dsda_bf_attribute_max] = {
   [dsda_bf_ammo_5] = false,
   [dsda_bf_bmapwidth] = false,
   [dsda_bf_used] = false,
+  [dsda_bf_ang_lt] = false,
+  [dsda_bf_ang_fa] = false,
+  [dsda_bf_ang_deg] = false,
+  [dsda_bf_ang_ba] = false,
 };
 
 static inline dboolean dsda_AdvanceBFRange(bf_range_t* range, int step) {
@@ -307,17 +315,44 @@ static void dsda_EndBF(int result) {
   if (result == BF_SUCCESS) {
     int write_depth = (bf_target.enabled && bf_target.evaluated) ? bf_target.best_depth : bf_depth;
 
-    // queue cmds
-    dsda_QueueBuildCommands(bf_result, write_depth);
+    for (i = 0; i < write_depth; ++i) {
+      lprintf(LO_INFO, "BF_WIN_CMD %d: %d %d %d %u\n",
+              i,
+              (int)bf_result[i].forwardmove,
+              (int)bf_result[i].sidemove,
+              (int)bf_result[i].angleturn,
+              (unsigned int)bf_result[i].buttons);
+    }
 
-    // apply winning inputs to buffer and preserve trailing tics
     if (dsda_Flag(dsda_arg_recordfromto)) {
+      // apply winning inputs directly to buffer without double-queuing
       dsda_ApplyAndPreserveDemoData(bf_result, write_depth);
+      dsda_ExitSkipMode();
+    } else {
+      dsda_QueueBuildCommands(bf_result, write_depth);
     }
   }
   else {
     dsda_ExitSkipMode();
   }
+}
+
+unsigned int dsda_GetBFAngle(short type) {
+  float scale;
+  player_t* player = &players[displayplayer];
+
+  if (gamestate != GS_LEVEL || !player->mo)
+    return 0;
+
+  switch (type) {
+    case 0:  scale = 16384.0f; break; // longtics
+    case 1:  scale = 2048.0f;  break; // fine angles
+    case 2:  scale = 90.0f;    break; // degrees
+    case 3:  scale = 64.0f;    break; // byte angles
+    default: scale = 64.0f;    break;
+  }
+
+  return (unsigned int)(player->mo->angle * (scale / ANG90));
 }
 
 static fixed_t dsda_BFAttribute(int attribute) {
@@ -368,6 +403,14 @@ static fixed_t dsda_BFAttribute(int attribute) {
       return bmapwidth;
 	case dsda_bf_used:
       return xUseSuccess;
+	case dsda_bf_ang_lt:
+      return (fixed_t)dsda_GetBFAngle(0);
+    case dsda_bf_ang_fa:
+      return (fixed_t)dsda_GetBFAngle(1);
+    case dsda_bf_ang_deg:
+      return (fixed_t)dsda_GetBFAngle(2);
+    case dsda_bf_ang_ba:
+      return (fixed_t)dsda_GetBFAngle(3);
     default:
       return 0;
   }
@@ -484,13 +527,30 @@ static void dsda_BFUpdateBestResult(fixed_t value) {
   lprintf(LO_INFO, "\n");
 }
 
+static int64_t dsda_AngleCircularDiff(int64_t a, int64_t b, int64_t period) {
+  int64_t diff = llabs(a - b) % period;
+  return (diff > (period / 2)) ? (period - diff) : diff;
+}
+
 static dboolean dsda_BFNewBestResult(fixed_t value) {
   if (!bf_target.evaluated)
     return true;
 
   switch (bf_target.limit) {
     case dsda_bf_acap:
-      return abs(value - bf_target.value) < abs(bf_target.best_value - bf_target.value);
+      {
+        int64_t period = 0;
+        if (bf_target.attribute == dsda_bf_ang_lt)       period = 65536;
+        else if (bf_target.attribute == dsda_bf_ang_fa)  period = 8192;
+        else if (bf_target.attribute == dsda_bf_ang_deg) period = 360;
+        else if (bf_target.attribute == dsda_bf_ang_ba)  period = 256;
+
+        if (period > 0) {
+          return dsda_AngleCircularDiff(value, bf_target.value, period) <
+                 dsda_AngleCircularDiff(bf_target.best_value, bf_target.value, period);
+        }
+        return abs(value - bf_target.value) < abs(bf_target.best_value - bf_target.value);
+      }
     case dsda_bf_max:
       return value > bf_target.best_value;
     case dsda_bf_min:
@@ -652,12 +712,9 @@ void dsda_AddBruteForceCondition(dsda_bf_attribute_t attribute,
   bf_condition[bf_condition_count].operator = operator;
   bf_condition[bf_condition_count].value = value;
 
-  if (fixed_point_attribute[attribute]) {
-    bf_condition[bf_condition_count].value <<= FRACBITS;
-    if (attribute == dsda_bf_speed) {
-      int64_t v = bf_condition[bf_condition_count].value;
-      bf_condition[bf_condition_count].value_sq = (v * v) >> FRACBITS;
-    }
+  if (fixed_point_attribute[attribute] && attribute == dsda_bf_speed) {
+    int64_t v = bf_condition[bf_condition_count].value;
+    bf_condition[bf_condition_count].value_sq = (v * v) >> FRACBITS;
   }
 
   if (attribute == dsda_bf_used)
@@ -685,8 +742,7 @@ void dsda_SetBruteForceTarget(dsda_bf_attribute_t attribute,
                     dsda_bf_limit_names[limit],
                     value);
 
-    if (fixed_point_attribute[attribute])
-      bf_target.value <<= FRACBITS;
+    // value is already in 16.16 fixed_t for fixed-point attributes
   }
   else
     lprintf(LO_INFO, "Set brute force target: %s %s\n",
